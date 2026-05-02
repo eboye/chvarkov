@@ -1,13 +1,15 @@
 use gtk4 as gtk;
 use gtk::prelude::*;
+use sourceview5 as sourceview;
+use sourceview::prelude::*;
 
 pub struct Preview {
     pub widget: gtk::Box,
 }
 
 impl Preview {
-    pub fn new(file_info: &gio::FileInfo, _path: &std::path::Path) -> Self {
-        let container = Self::create_preview_layout(file_info, false);
+    pub fn new(file_info: &gio::FileInfo, path: &std::path::Path) -> Self {
+        let container = Self::create_preview_layout(file_info, path, false);
 
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -55,7 +57,7 @@ impl Preview {
         }
     }
 
-    pub fn create_preview_layout(file_info: &gio::FileInfo, large: bool) -> gtk::Box {
+    pub fn create_preview_layout(file_info: &gio::FileInfo, path: &std::path::Path, large: bool) -> gtk::Box {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(12)
@@ -65,17 +67,60 @@ impl Preview {
             .margin_end(if large { 40 } else { 20 })
             .build();
 
-        // Thumbnail / Icon
-        let image = gtk::Image::builder()
-            .pixel_size(if large { 256 } else { 128 })
-            .halign(gtk::Align::Center)
-            .build();
-        
-        if let Some(icon) = file_info.icon() {
-            image.set_from_gicon(&icon);
+        let content_type = file_info.content_type();
+        let is_image = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "image/*")).unwrap_or(false);
+        let is_text = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "text/*")).unwrap_or(false);
+
+        if is_image && large {
+            // High-quality large image preview for Sushi mode
+            let picture = gtk::Picture::for_filename(path);
+            picture.set_content_fit(gtk::ContentFit::Contain);
+            picture.set_hexpand(true);
+            picture.set_vexpand(true);
+            container.append(&picture);
+        } else if is_text && large {
+            // Syntax highlighted code preview
+            let buffer = sourceview::Buffer::new(None);
+            let view = sourceview::View::with_buffer(&buffer);
+            view.set_editable(false);
+            view.set_hexpand(true);
+            view.set_vexpand(true);
+            view.set_monospace(true);
+            view.set_show_line_numbers(true);
+
+            // Set language
+            let lang_manager = sourceview::LanguageManager::default();
+            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let lang = lang_manager.guess_language(Some(filename), content_type.as_deref());
+            buffer.set_language(lang.as_ref());
+
+            // Load first few KB
+            if let Ok(mut file) = std::fs::File::open(path) {
+                use std::io::Read;
+                let mut content = Vec::new();
+                file.take(10000).read_to_end(&mut content).ok(); // Read first 10KB
+                let text = String::from_utf8_lossy(&content);
+                buffer.set_text(&text);
+            }
+
+            let scrolled = gtk::ScrolledWindow::builder()
+                .hexpand(true)
+                .vexpand(true)
+                .child(&view)
+                .build();
+            container.append(&scrolled);
+        } else {
+            // Fallback: Large Icon + Metadata
+            let image = gtk::Image::builder()
+                .pixel_size(if large { 256 } else { 128 })
+                .halign(gtk::Align::Center)
+                .build();
+            
+            if let Some(icon) = file_info.icon() {
+                image.set_from_gicon(&icon);
+            }
+            container.append(&image);
         }
-        
-        container.append(&image);
 
         // Filename
         let name_label = gtk::Label::builder()
@@ -95,18 +140,15 @@ impl Preview {
 
         let mut row = 0;
 
-        // Type
-        if let Some(content_type) = file_info.content_type() {
-            let type_desc = gio::content_type_get_description(&content_type);
+        if let Some(ct) = content_type {
+            let type_desc = gio::content_type_get_description(&ct);
             add_info_row(&grid, "Type", &type_desc, &mut row);
         }
 
-        // Size
         let size = file_info.size();
         let size_str = glib::format_size(size as u64);
         add_info_row(&grid, "Size", &size_str, &mut row);
 
-        // Modified
         if let Some(date_time) = file_info.modification_date_time() {
             if let Ok(formatted) = date_time.format("%Y-%m-%d %H:%M") {
                 add_info_row(&grid, "Modified", &formatted, &mut row);

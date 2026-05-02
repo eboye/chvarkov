@@ -72,6 +72,7 @@ impl Column {
         
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup(move |_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
             let root_box = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
@@ -150,6 +151,7 @@ impl Column {
         });
 
         factory.connect_bind(move |_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
             let file_info = list_item
                 .item()
                 .and_downcast::<gio::FileInfo>()
