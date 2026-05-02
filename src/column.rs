@@ -48,10 +48,17 @@ impl Column {
     pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool) -> Self {
         let file = gio::File::for_path(path);
         let directory_list = gtk::DirectoryList::builder()
-            .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified")
+            .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,standard::is-symlink-target-directory")
             .file(&file)
             .monitored(true)
+            .io_priority(glib::Priority::DEFAULT)
             .build();
+        
+        directory_list.connect_error_notify(|dl| {
+            if let Some(err) = dl.error() {
+                eprintln!("DirectoryList error for {:?}: {}", dl.file().and_then(|f| f.path()), err);
+            }
+        });
         
         let filter = gtk::CustomFilter::new(move |item| {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();

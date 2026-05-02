@@ -226,7 +226,6 @@ fn build_ui(app: &Application) {
             .build()
     };
 
-    // To make sidebar take full vertical space, it must be side-by-side with the main content area (which includes the toolbar)
     let root_layout = Box::builder()
         .orientation(Orientation::Horizontal)
         .hexpand(true)
@@ -243,7 +242,6 @@ fn build_ui(app: &Application) {
         .title_widget(&adw::WindowTitle::new("Arch-Finder", ""))
         .build();
 
-    // Toggle Sidebar Button
     let toggle_sidebar_btn = gtk::ToggleButton::builder()
         .icon_name("sidebar-show-symbolic")
         .tooltip_text("Toggle Sidebar (F9)")
@@ -251,7 +249,6 @@ fn build_ui(app: &Application) {
         .build();
     header_bar.pack_start(&toggle_sidebar_btn);
 
-    // Group 1: Display Toggles (Linked)
     let display_group = Box::builder()
         .orientation(Orientation::Horizontal)
         .css_classes(["linked"])
@@ -273,7 +270,6 @@ fn build_ui(app: &Application) {
 
     header_bar.pack_start(&display_group);
 
-    // Separator
     let separator = gtk::Separator::new(Orientation::Vertical);
     header_bar.pack_start(&separator);
 
@@ -282,7 +278,6 @@ fn build_ui(app: &Application) {
         .map(|a| a.state().unwrap().get::<String>().unwrap())
         .unwrap_or_else(|| "miller".to_string());
 
-    // Group 2: View Options
     let view_menu = gio::Menu::new();
     view_menu.append(Some("Miller Columns"), Some("app.view-type::miller"));
     view_menu.append(Some("Icons View"), Some("app.view-type::icons"));
@@ -331,7 +326,7 @@ fn build_ui(app: &Application) {
 
     scrolled_window.set_child(Some(&columns_box));
 
-    let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
+    let manager = ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta);
     
     let preview_action = app.lookup_action("preview").unwrap().downcast::<gio::SimpleAction>().unwrap();
     let manager_preview_clone = manager.clone();
@@ -356,7 +351,7 @@ fn build_ui(app: &Application) {
     }
 
     if view_type == "miller" {
-        main_content.append(&scrolled_window);
+        main_content.append(&manager.scrolled_window);
         root_layout.append(&main_content);
 
         let first_list_view = manager.add_column(glib::home_dir(), 0);
@@ -378,28 +373,6 @@ fn build_ui(app: &Application) {
     }
 }
 
-fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
-    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-    
-    let popup = adw::Window::builder()
-        .transient_for(parent)
-        .default_width(800)
-        .default_height(600)
-        .modal(true)
-        .content(&preview_layout)
-        .build();
-    
-    let key_controller = gtk::EventControllerKey::new();
-    let popup_clone = popup.clone();
-    key_controller.connect_key_pressed(move |_, _, _, _| {
-        popup_clone.close();
-        glib::Propagation::Stop
-    });
-    popup.add_controller(key_controller);
-
-    popup.present();
-}
-
 #[derive(Clone)]
 struct SelectionInfo {
     file_info: gio::FileInfo,
@@ -415,6 +388,7 @@ struct ColumnEntry {
 #[derive(Clone)]
 struct ColumnManager {
     columns_box: Box,
+    scrolled_window: ScrolledWindow,
     show_hidden: bool,
     show_meta: bool,
     entries: Rc<RefCell<Vec<ColumnEntry>>>,
@@ -423,9 +397,10 @@ struct ColumnManager {
 }
 
 impl ColumnManager {
-    fn new(columns_box: Box, show_hidden: bool, show_meta: bool) -> Self {
+    fn new(columns_box: Box, scrolled_window: ScrolledWindow, show_hidden: bool, show_meta: bool) -> Self {
         Self {
             columns_box,
+            scrolled_window,
             show_hidden,
             show_meta,
             entries: Rc::new(RefCell::new(Vec::new())),
@@ -530,6 +505,13 @@ impl ColumnManager {
             });
         }
 
+        // Auto-scroll to the new column
+        let adj = self.scrolled_window.hadjustment();
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+            adj.set_value(adj.upper() - adj.page_size());
+            glib::ControlFlow::Break
+        });
+
         let self_clone = self.clone();
         let path_clone = path.clone();
         column.selection_model.connect_selection_changed(move |selection_model, _, _| {
@@ -547,7 +529,13 @@ impl ColumnManager {
                 
                 self_clone.update_preview_if_open();
 
-                if file_info.file_type() == gio::FileType::Directory {
+                let is_dir = file_info.file_type() == gio::FileType::Directory || 
+                             (file_info.file_type() == gio::FileType::SymbolicLink && 
+                              file_info.attribute_as_string("standard::is-symlink-target-directory") == Some("true".into()));
+                
+                let is_actually_dir = is_dir || new_path.is_dir();
+
+                if is_actually_dir {
                     self_clone.add_column(new_path, index + 1);
                 } else {
                     let mut entries = self_clone.entries.borrow_mut();
