@@ -6,8 +6,45 @@ pub struct Column {
     pub selection_model: gtk::SingleSelection,
 }
 
+fn create_context_menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    
+    let section1 = gio::Menu::new();
+    section1.append(Some("Open"), Some("app.open"));
+    menu.append_section(None, &section1);
+
+    let section2 = gio::Menu::new();
+    section2.append(Some("Cut"), Some("app.cut"));
+    section2.append(Some("Copy"), Some("app.copy"));
+    section2.append(Some("Move to..."), Some("app.move-to"));
+    section2.append(Some("Copy to..."), Some("app.copy-to"));
+    menu.append_section(None, &section2);
+
+    let section3 = gio::Menu::new();
+    section3.append(Some("Rename..."), Some("app.rename"));
+    section3.append(Some("Create Link"), Some("app.create-link"));
+    section3.append(Some("Compress..."), Some("app.compress"));
+    section3.append(Some("Email..."), Some("app.email"));
+    section3.append(Some("Move to Trash"), Some("app.delete"));
+    menu.append_section(None, &section3);
+
+    let section4 = gio::Menu::new();
+    section4.append(Some("Open in Terminal"), Some("app.open-terminal"));
+    section4.append(Some("Copy Path"), Some("app.copy-path"));
+    section4.append(Some("Copy URI"), Some("app.copy-uri"));
+    section4.append(Some("Copy Name"), Some("app.copy-name"));
+    section4.append(Some("Sharing Options"), Some("app.sharing-options"));
+    menu.append_section(None, &section4);
+
+    let section5 = gio::Menu::new();
+    section5.append(Some("Properties"), Some("app.properties"));
+    menu.append_section(None, &section5);
+
+    menu
+}
+
 impl Column {
-    pub fn new(path: &std::path::Path, show_hidden: bool) -> Self {
+    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool) -> Self {
         let file = gio::File::for_path(path);
         let directory_list = gtk::DirectoryList::builder()
             .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified")
@@ -33,68 +70,112 @@ impl Column {
         let selection_model = gtk::SingleSelection::new(Some(filter_model));
         
         let factory = gtk::SignalListItemFactory::new();
-        factory.connect_setup(|_, list_item| {
-            let box_ = gtk::Box::builder()
+        factory.connect_setup(move |_, list_item| {
+            let root_box = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
                 .margin_start(4)
                 .margin_end(4)
+                .focusable(true)
                 .build();
 
             let image = gtk::Image::builder()
                 .icon_size(gtk::IconSize::Normal)
+                .valign(gtk::Align::Center)
                 .build();
             
+            let text_box = gtk::Box::builder()
+                .orientation(gtk::Orientation::Vertical)
+                .valign(gtk::Align::Center)
+                .build();
+
             let label = gtk::Label::builder()
                 .halign(gtk::Align::Start)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
                 .xalign(0.0)
-                .hexpand(true)
                 .build();
             
-            box_.append(&image);
-            box_.append(&label);
+            text_box.append(&label);
 
+            if show_meta {
+                let meta_label = gtk::Label::builder()
+                    .halign(gtk::Align::Start)
+                    .ellipsize(gtk::pango::EllipsizeMode::End)
+                    .xalign(0.0)
+                    .css_classes(["caption", "dim-label"])
+                    .build();
+                text_box.append(&meta_label);
+            }
+
+            root_box.append(&image);
+            root_box.append(&text_box);
+
+            // Context menu gesture (Right Click)
             let gesture = gtk::GestureClick::builder()
                 .button(3)
                 .build();
             
             gesture.connect_pressed(move |gesture, _, x, y| {
                 let widget = gesture.widget().unwrap();
-                
-                let menu = gio::Menu::new();
-                menu.append(Some("Copy"), Some("app.copy"));
-                menu.append(Some("Paste"), Some("app.paste"));
-                menu.append(Some("Rename"), Some("app.rename"));
-                menu.append(Some("Delete"), Some("app.delete"));
-
+                let menu = create_context_menu();
                 let popover = gtk::PopoverMenu::from_model(Some(&menu));
                 popover.set_parent(&widget);
                 popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
                 popover.popup();
             });
 
-            box_.add_controller(gesture);
-            list_item.set_child(Some(&box_));
+            // Keyboard shortcut for Context Menu (Menu key or Shift+F10)
+            let key_controller = gtk::EventControllerKey::new();
+            let root_box_clone = root_box.clone();
+            key_controller.connect_key_pressed(move |_, key, _, modifier| {
+                if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
+                    let widget = root_box_clone.clone().upcast::<gtk::Widget>();
+                    let menu = create_context_menu();
+                    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                    popover.set_parent(&widget);
+                    // Point to the middle of the widget
+                    let width = widget.width();
+                    let height = widget.height();
+                    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
+                    popover.popup();
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            });
+
+            root_box.add_controller(gesture);
+            root_box.add_controller(key_controller);
+            list_item.set_child(Some(&root_box));
         });
 
-        factory.connect_bind(|_, list_item| {
+        factory.connect_bind(move |_, list_item| {
             let file_info = list_item
                 .item()
                 .and_downcast::<gio::FileInfo>()
                 .expect("Item must be FileInfo");
             
-            let box_ = list_item
+            let root_box = list_item
                 .child()
                 .and_downcast::<gtk::Box>()
                 .expect("Child must be Box");
             
-            let image = box_.first_child().unwrap().downcast::<gtk::Image>().unwrap();
-            let label = image.next_sibling().unwrap().downcast::<gtk::Label>().unwrap();
+            let image = root_box.first_child().unwrap().downcast::<gtk::Image>().unwrap();
+            let text_box = image.next_sibling().unwrap().downcast::<gtk::Box>().unwrap();
+            let label = text_box.first_child().unwrap().downcast::<gtk::Label>().unwrap();
             
             label.set_text(&file_info.display_name());
             if let Some(icon) = file_info.icon() {
                 image.set_from_gicon(&icon);
+            }
+
+            if show_meta {
+                if let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
+                    if let Some(date_time) = file_info.modification_date_time() {
+                        if let Ok(formatted) = date_time.format("%Y-%m-%d") {
+                            meta_label.set_text(&formatted);
+                        }
+                    }
+                }
             }
         });
 
