@@ -173,10 +173,7 @@ impl Column {
         // Click-to-deselect on empty space
         let click_gesture = gtk::GestureClick::builder().button(1).build();
         let sel_model_clone = selection_model.clone();
-        click_gesture.connect_pressed(move |gesture, _, _, _| {
-            // Check if the click target was the list_view itself
-            // We use the coordinates to see if a child was hit? 
-            // Better: in GTK4, gestures on the parent only fire if children don't claim them
+        click_gesture.connect_pressed(move |_gesture, _, _, _| {
             sel_model_clone.unselect_all();
         });
         list_view.add_controller(click_gesture);

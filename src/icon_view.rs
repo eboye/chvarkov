@@ -5,7 +5,6 @@ use crate::utils;
 pub struct IconView {
     pub widget: gtk::ScrolledWindow,
     pub grid_view: gtk::GridView,
-    pub selection_model: gtk::MultiSelection,
 }
 
 impl IconView {
@@ -184,7 +183,6 @@ impl IconView {
         Self {
             widget: scrolled_window,
             grid_view,
-            selection_model,
         }
     }
 }
