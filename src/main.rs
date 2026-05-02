@@ -520,7 +520,13 @@ impl ColumnManager {
                 let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
                 let name = file_info.name();
                 let mut new_path = path_clone.clone();
-                new_path.push(name);
+                new_path.push(&name);
+
+                let ftype = file_info.file_type();
+                let fs_is_dir = new_path.is_dir();
+                
+                println!("Selection [Column {}]: {:?} | Type: {:?} | FS is_dir: {}", 
+                         index, new_path, ftype, fs_is_dir);
 
                 *self_clone.current_selection.borrow_mut() = Some(SelectionInfo {
                     file_info: file_info.clone(),
@@ -529,15 +535,11 @@ impl ColumnManager {
                 
                 self_clone.update_preview_if_open();
 
-                let is_dir = file_info.file_type() == gio::FileType::Directory || 
-                             (file_info.file_type() == gio::FileType::SymbolicLink && 
-                              file_info.attribute_as_string("standard::is-symlink-target-directory") == Some("true".into()));
-                
-                let is_actually_dir = is_dir || new_path.is_dir();
-
-                if is_actually_dir {
+                if ftype == gio::FileType::Directory || fs_is_dir {
+                    println!("Opening directory: {:?}", new_path);
                     self_clone.add_column(new_path, index + 1);
                 } else {
+                    println!("Showing preview for file: {:?}", new_path);
                     let mut entries = self_clone.entries.borrow_mut();
                     while entries.len() > index + 1 {
                         let entry = entries.pop().unwrap();
@@ -552,6 +554,8 @@ impl ColumnManager {
                         focus_target: preview_widget,
                     });
                 }
+            } else {
+                println!("Selection cleared in Column {}", index);
             }
         });
 

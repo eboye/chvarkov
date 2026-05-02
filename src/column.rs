@@ -74,8 +74,14 @@ impl Column {
             true
         });
 
-        let filter_model = gtk::FilterListModel::new(Some(directory_list), Some(filter));
-        let selection_model = gtk::SingleSelection::new(Some(filter_model));
+        let filter_model = gtk::FilterListModel::new(Some(directory_list.clone()), Some(filter));
+        let selection_model = gtk::SingleSelection::builder()
+            .model(&filter_model)
+            .autoselect(false)
+            .can_unselect(true)
+            .build();
+        
+        println!("Column created for: {:?}", path);
         
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup(move |_, list_item| {
