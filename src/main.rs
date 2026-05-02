@@ -130,25 +130,31 @@ fn build_ui(app: &Application) {
     let separator = gtk::Separator::new(Orientation::Vertical);
     header_bar.pack_start(&separator);
 
+    let view_type = app.lookup_action("view-type")
+        .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
+        .map(|a| a.state().unwrap().get::<String>().unwrap())
+        .unwrap_or_else(|| "miller".to_string());
+
     // Group 2: View Options
     let view_menu = gio::Menu::new();
     view_menu.append(Some("Miller Columns"), Some("app.view-type::miller"));
     view_menu.append(Some("Icons View"), Some("app.view-type::icons"));
     view_menu.append(Some("List View"), Some("app.view-type::list"));
 
+    let view_icon = match view_type.as_str() {
+        "icons" => "view-grid-symbolic",
+        "list" => "view-list-symbolic",
+        _ => "view-column-symbolic",
+    };
+
     let view_type_btn = gtk::MenuButton::builder()
-        .icon_name("view-more-symbolic")
+        .icon_name(view_icon)
         .tooltip_text("View Options")
         .menu_model(&view_menu)
         .build();
     header_bar.pack_start(&view_type_btn);
 
     content.append(&header_bar);
-
-    let view_type = app.lookup_action("view-type")
-        .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
-        .map(|a| a.state().unwrap().get::<String>().unwrap())
-        .unwrap_or_else(|| "miller".to_string());
 
     if view_type == "miller" {
         let scrolled_window = ScrolledWindow::builder()
