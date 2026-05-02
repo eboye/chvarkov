@@ -245,7 +245,13 @@ fn build_ui(app: &Application) {
 
         let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
         manager.add_column(glib::home_dir(), 0);
+
+        // Grab focus on the first column's list view after adding it
+        if let Some(first_column_widget) = manager.widgets.borrow().get(0) {
+            first_column_widget.grab_focus();
+        }
     } else {
+
         let label = gtk::Label::new(Some(&format!("{} view is not yet implemented", view_type)));
         label.set_vexpand(true);
         content.append(&label);

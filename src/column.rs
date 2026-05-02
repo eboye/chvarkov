@@ -180,6 +180,7 @@ impl Column {
         });
 
         let list_view = gtk::ListView::new(Some(selection_model.clone()), Some(factory));
+        list_view.set_focusable(true);
         
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
