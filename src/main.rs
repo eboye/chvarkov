@@ -148,6 +148,13 @@ fn setup_styles() {
         .adaptive-label {
             transition: all 200ms ease-in-out;
         }
+
+        /* Thumbnail styling */
+        image.thumbnail {
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            background-color: @view_bg_color;
+        }
     ");
 
     gtk::style_context_add_provider_for_display(

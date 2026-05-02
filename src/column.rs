@@ -152,8 +152,24 @@ impl Column {
             let label = text_box.first_child().unwrap().downcast::<gtk::Label>().unwrap();
             
             label.set_text(&file_info.display_name());
-            if let Some(icon) = file_info.icon() {
-                image.set_from_gicon(&icon);
+            
+            // Check for thumbnail first
+            let mut icon_set = false;
+            if let Some(thumb_path) = file_info.attribute_byte_string("thumbnail::path") {
+                use std::os::unix::ffi::OsStrExt;
+                let path = std::path::Path::new(std::ffi::OsStr::from_bytes(thumb_path.as_bytes()));
+                let file = gio::File::for_path(path);
+                let thumb_icon = gio::FileIcon::new(&file);
+                image.set_from_gicon(&thumb_icon);
+                image.add_css_class("thumbnail");
+                icon_set = true;
+            }
+
+            if !icon_set {
+                if let Some(icon) = file_info.icon() {
+                    image.set_from_gicon(&icon);
+                    image.remove_css_class("thumbnail");
+                }
             }
 
             if show_meta {
