@@ -1,6 +1,7 @@
 mod column;
 mod preview;
 mod sidebar;
+mod icon_view;
 
 use libadwaita as adw;
 use adw::prelude::*;
@@ -11,6 +12,7 @@ use std::path::PathBuf;
 use column::Column;
 use preview::Preview;
 use sidebar::Sidebar;
+use icon_view::IconView;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -37,21 +39,21 @@ fn setup_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data("
         /* Focused list selection - Vibrant accent color */
-        .focused-column row:selected {
+        .focused-column row:selected, .focused-grid row:selected {
             background-color: @accent_bg_color;
             color: @accent_fg_color;
             border-radius: 6px;
         }
 
         /* Unfocused list selection (parent columns) - Subdued color */
-        listview row:selected {
+        listview row:selected, gridview row:selected {
             background-color: alpha(@accent_bg_color, 0.2);
             color: @view_fg_color;
             border-radius: 6px;
         }
 
         /* Hover effect for rows */
-        listview row:hover:not(:selected) {
+        listview row:hover:not(:selected), gridview row:hover:not(:selected) {
             background-color: alpha(@accent_bg_color, 0.05);
         }
 
@@ -423,6 +425,13 @@ fn build_ui(app: &Application) {
             lv.add_css_class("focused-column");
             lv.grab_focus();
         }
+    } else if view_type == "icons" {
+        let icon_view = IconView::new(&glib::home_dir(), show_hidden, zoom_level);
+        main_content.append(&icon_view.widget);
+        root_layout.append(&main_content);
+        window.set_content(Some(&root_layout));
+        window.present();
+        icon_view.grid_view.grab_focus();
     } else {
         let label = gtk::Label::new(Some(&format!("{} view is not yet implemented", view_type)));
         label.set_vexpand(true);
@@ -431,6 +440,28 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&root_layout));
         window.present();
     }
+}
+
+fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
+    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+    
+    let popup = adw::Window::builder()
+        .transient_for(parent)
+        .default_width(800)
+        .default_height(600)
+        .modal(true)
+        .content(&preview_layout)
+        .build();
+    
+    let key_controller = gtk::EventControllerKey::new();
+    let popup_clone = popup.clone();
+    key_controller.connect_key_pressed(move |_, _, _, _| {
+        popup_clone.close();
+        glib::Propagation::Stop
+    });
+    popup.add_controller(key_controller);
+
+    popup.present();
 }
 
 #[derive(Clone)]
