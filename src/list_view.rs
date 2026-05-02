@@ -260,12 +260,13 @@ impl ListView {
 
         // Keyboard navigation for expansion/collapse
         let key_ctrl = gtk::EventControllerKey::new();
+        key_ctrl.set_propagation_phase(gtk::PropagationPhase::Capture);
         let sel_model_nav = selection_model.clone();
         key_ctrl.connect_key_pressed(move |_, key, _, _| {
             let selection = sel_model_nav.selection();
             if selection.is_empty() { return glib::Propagation::Proceed; }
             
-            let first_idx = selection.nth(0);
+            let first_idx = selection.minimum();
             let model = sel_model_nav.model().unwrap();
             let item = model.item(first_idx);
             
