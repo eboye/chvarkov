@@ -23,10 +23,11 @@ impl Sidebar {
             .css_classes(["navigation-sidebar"])
             .build();
 
-        // Title Area - will be synced with main HeaderBar height via SizeGroup in main.rs
+        // Title Area - Zero padding, fixed height matching headerbar
         let title_header = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .css_classes(["sidebar-title-area"])
+            .valign(gtk::Align::Fill)
             .build();
 
         let title_label = gtk::Label::builder()
@@ -34,6 +35,8 @@ impl Sidebar {
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Center)
             .margin_start(16)
+            .margin_top(0)
+            .margin_bottom(0)
             .css_classes(["title-4"])
             .build();
         
@@ -99,10 +102,11 @@ impl Sidebar {
 
         container.append(&scrolled_window);
 
-        // Preferences Area - will be synced with breadcrumb bar height
+        // Preferences Area - Zero padding, fixed height matching breadcrumb bar
         let pref_footer = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .css_classes(["sidebar-footer-area"])
+            .valign(gtk::Align::Fill)
             .build();
 
         let pref_btn = gtk::Button::builder()
@@ -110,6 +114,8 @@ impl Sidebar {
             .has_frame(false)
             .margin_start(12)
             .margin_end(12)
+            .margin_top(0)
+            .margin_bottom(0)
             .valign(gtk::Align::Center)
             .build();
         

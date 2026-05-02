@@ -82,14 +82,14 @@ fn setup_styles() {
             border-right: 1px solid alpha(@borders, 0.3);
         }
 
-        /* Strict match for AdwHeaderBar height and style */
+        /* Absolute Padding Removal for Alignment */
         .sidebar-title-area, headerbar, .headerbar {
             background: none;
             background-color: @window_bg_color;
             border-bottom: 1px solid alpha(@borders, 0.3);
             box-sizing: border-box;
-            padding: 0;
-            margin: 0;
+            padding: 0 !important;
+            margin: 0 !important;
             min-height: 46px; 
         }
         
@@ -97,8 +97,8 @@ fn setup_styles() {
             background-color: @window_bg_color;
             border-top: 1px solid alpha(@borders, 0.3);
             box-sizing: border-box;
-            padding: 0;
-            margin: 0;
+            padding: 0 !important;
+            margin: 0 !important;
             min-height: 40px;
         }
 
