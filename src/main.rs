@@ -359,6 +359,28 @@ fn build_ui(app: &Application) {
         .build();
     header_bar.pack_start(&view_type_btn);
 
+    // Zoom Controls
+    let zoom_group = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .css_classes(["linked"])
+        .build();
+
+    let zoom_out_btn = gtk::Button::builder()
+        .icon_name("zoom-out-symbolic")
+        .tooltip_text("Zoom Out (Ctrl+-)")
+        .action_name("app.zoom-out")
+        .build();
+    zoom_group.append(&zoom_out_btn);
+
+    let zoom_in_btn = gtk::Button::builder()
+        .icon_name("zoom-in-symbolic")
+        .tooltip_text("Zoom In (Ctrl++)")
+        .action_name("app.zoom-in")
+        .build();
+    zoom_group.append(&zoom_in_btn);
+
+    header_bar.pack_end(&zoom_group);
+
     main_content.append(&header_bar);
 
     let show_sidebar = app.lookup_action("toggle-sidebar")
@@ -426,11 +448,25 @@ fn build_ui(app: &Application) {
             lv.grab_focus();
         }
     } else if view_type == "icons" {
-        let icon_view = IconView::new(&glib::home_dir(), show_hidden, zoom_level);
+        let current_path = manager.current_selection.borrow().as_ref()
+            .map(|s| s.path.parent().unwrap_or(&s.path).to_path_buf())
+            .unwrap_or_else(glib::home_dir);
+            
+        let icon_view = IconView::new(&current_path, show_hidden, zoom_level);
+        
+        let manager_icon_clone = manager.clone();
+        let path_icon_clone = current_path.clone();
+        icon_view.grid_view.model().unwrap().connect_selection_changed(move |selection_model, _, _| {
+            let selection_model = selection_model.downcast_ref::<gtk::SingleSelection>().unwrap();
+            manager_icon_clone.handle_selection_change(selection_model, &path_icon_clone, 0);
+        });
+
         main_content.append(&icon_view.widget);
         root_layout.append(&main_content);
         window.set_content(Some(&root_layout));
         window.present();
+        
+        icon_view.grid_view.add_css_class("focused-grid");
         icon_view.grid_view.grab_focus();
     } else {
         let label = gtk::Label::new(Some(&format!("{} view is not yet implemented", view_type)));
@@ -440,28 +476,6 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&root_layout));
         window.present();
     }
-}
-
-fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
-    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-    
-    let popup = adw::Window::builder()
-        .transient_for(parent)
-        .default_width(800)
-        .default_height(600)
-        .modal(true)
-        .content(&preview_layout)
-        .build();
-    
-    let key_controller = gtk::EventControllerKey::new();
-    let popup_clone = popup.clone();
-    key_controller.connect_key_pressed(move |_, _, _, _| {
-        popup_clone.close();
-        glib::Propagation::Stop
-    });
-    popup.add_controller(key_controller);
-
-    popup.present();
 }
 
 #[derive(Clone)]
