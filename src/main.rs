@@ -102,6 +102,11 @@ fn setup_styles() {
             background-color: alpha(@accent_bg_color, 0.1);
             color: @accent_bg_color;
         }
+
+        /* Adaptive labels */
+        .adaptive-label {
+            transition: all 200ms ease-in-out;
+        }
     ");
 
     gtk::style_context_add_provider_for_display(
@@ -604,9 +609,25 @@ fn build_ui(app: &Application) {
         "list" => "view-list-symbolic",
         _ => "view-column-symbolic",
     };
+    
+    let view_label_text = match view_type.as_str() {
+        "icons" => "Icons",
+        "list" => "List",
+        _ => "Columns",
+    };
+
+    let view_btn_content = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    let view_btn_image = gtk::Image::from_icon_name(view_icon);
+    let view_btn_label = gtk::Label::new(Some(view_label_text));
+    view_btn_label.add_css_class("adaptive-label");
+    view_btn_content.append(&view_btn_image);
+    view_btn_content.append(&view_btn_label);
 
     let view_type_btn = gtk::MenuButton::builder()
-        .icon_name(view_icon)
+        .child(&view_btn_content)
         .tooltip_text("View Options")
         .menu_model(&view_menu)
         .build();
@@ -619,8 +640,25 @@ fn build_ui(app: &Application) {
     sort_menu.append(Some("Sort by Size"), Some("app.sort-type::size"));
     sort_menu.append(Some("Sort by Type"), Some("app.sort-type::type"));
 
+    let sort_label_text = match sort_type.as_str() {
+        "date" => "Date",
+        "size" => "Size",
+        "type" => "Type",
+        _ => "Name",
+    };
+
+    let sort_btn_content = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    let sort_btn_image = gtk::Image::from_icon_name("view-sort-ascending-symbolic");
+    let sort_btn_label = gtk::Label::new(Some(sort_label_text));
+    sort_btn_label.add_css_class("adaptive-label");
+    sort_btn_content.append(&sort_btn_image);
+    sort_btn_content.append(&sort_btn_label);
+
     let sort_type_btn = gtk::MenuButton::builder()
-        .icon_name("view-sort-ascending-symbolic")
+        .child(&sort_btn_content)
         .tooltip_text("Sort Options")
         .menu_model(&sort_menu)
         .build();
@@ -658,6 +696,30 @@ fn build_ui(app: &Application) {
     main_content.append(&header_bar);
 
     let settings = gio::Settings::new("com.example.ArchFinder");
+    
+    // Responsive labels logic
+    let view_label_weak = view_btn_label.downgrade();
+    let sort_label_weak = sort_btn_label.downgrade();
+    
+    // Poll for width changes as a robust workaround in GTK4
+    let win_weak = window.downgrade();
+    glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+        if let Some(win) = win_weak.upgrade() {
+            let width = win.width();
+            let show = width > 900;
+            if let Some(l) = view_label_weak.upgrade() { l.set_visible(show); }
+            if let Some(l) = sort_label_weak.upgrade() { l.set_visible(show); }
+            glib::ControlFlow::Continue
+        } else {
+            glib::ControlFlow::Break
+        }
+    });
+    
+    // Initial check
+    let initial_width = window.width();
+    view_btn_label.set_visible(initial_width > 900);
+    sort_btn_label.set_visible(initial_width > 900);
+
     let show_sidebar = app.lookup_action("show-sidebar")
         .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
         .map(|a| a.state().unwrap().get::<bool>().unwrap())
@@ -754,7 +816,11 @@ fn build_ui(app: &Application) {
                 child.remove_css_class("sidebar-active");
                 current = child.next_sibling();
             }
-            list_row.add_css_class("sidebar-active");
+            let list_row_clone = list_row.clone();
+            glib::idle_add_local(move || {
+                list_row_clone.add_css_class("sidebar-active");
+                glib::ControlFlow::Break
+            });
 
             let view_type: String = settings.get("view-type");
             if view_type == "icons" {
