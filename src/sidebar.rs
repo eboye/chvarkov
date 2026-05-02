@@ -3,7 +3,7 @@ use gtk::prelude::*;
 use std::path::PathBuf;
 
 pub struct Sidebar {
-    pub widget: gtk::ScrolledWindow,
+    pub widget: gtk::Box,
     pub list_box: gtk::ListBox,
 }
 
@@ -15,15 +15,20 @@ struct SidebarItem {
 
 impl Sidebar {
     pub fn new() -> Self {
+        let container = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .width_request(200)
+            .css_classes(["navigation-sidebar"])
+            .build();
+
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
-            .css_classes(["navigation-sidebar"])
             .build();
 
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .width_request(200)
+            .vexpand(true)
             .child(&list_box)
             .build();
 
@@ -62,15 +67,46 @@ impl Sidebar {
             let list_row = gtk::ListBoxRow::new();
             list_row.set_child(Some(&row));
             
-            // Store the path in the widget so we can retrieve it on activation
             let path_string = item.path.to_string_lossy().to_string();
             list_row.set_widget_name(&path_string);
             
             list_box.append(&list_row);
         }
 
+        container.append(&scrolled_window);
+
+        // Preferences Button at bottom
+        let pref_btn = gtk::Button::builder()
+            .action_name("app.preferences")
+            .has_frame(false)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(12)
+            .margin_bottom(12)
+            .build();
+        
+        let pref_content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .build();
+        
+        let pref_icon = gtk::Image::builder()
+            .icon_name("emblem-system-symbolic")
+            .build();
+        
+        let pref_label = gtk::Label::builder()
+            .label("Preferences")
+            .halign(gtk::Align::Start)
+            .build();
+        
+        pref_content.append(&pref_icon);
+        pref_content.append(&pref_label);
+        pref_btn.set_child(Some(&pref_content));
+
+        container.append(&pref_btn);
+
         Self {
-            widget: scrolled_window,
+            widget: container,
             list_box,
         }
     }

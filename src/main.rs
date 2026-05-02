@@ -79,6 +79,7 @@ fn setup_styles() {
         
         .navigation-sidebar {
             background-color: @window_bg_color;
+            border-right: 1px solid alpha(@borders, 0.3);
         }
 
         /* Sidebar active highlighting */
@@ -704,13 +705,6 @@ fn build_ui(app: &Application) {
 
     header_bar.pack_end(&zoom_group);
 
-    let preferences_btn = gtk::Button::builder()
-        .icon_name("emblem-system-symbolic")
-        .tooltip_text("Preferences")
-        .action_name("app.preferences")
-        .build();
-    header_bar.pack_end(&preferences_btn);
-
     main_content.append(&header_bar);
 
     let settings = gio::Settings::new("com.example.ArchFinder");
@@ -869,9 +863,6 @@ fn build_ui(app: &Application) {
             }
             current = child.next_sibling();
         }
-
-        let sep = gtk::Separator::new(Orientation::Vertical);
-        root_layout.append(&sep);
     }
 
     if view_type == "miller" {
