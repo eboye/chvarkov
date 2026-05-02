@@ -69,6 +69,7 @@ impl Preview {
 
         let content_type = file_info.content_type();
         let is_image = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "image/*")).unwrap_or(false);
+        let is_video = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "video/*")).unwrap_or(false);
         let is_text = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "text/*")).unwrap_or(false);
 
         if is_image && large {
@@ -77,6 +78,16 @@ impl Preview {
             picture.set_hexpand(true);
             picture.set_vexpand(true);
             container.append(&picture);
+        } else if is_video && large {
+            let file = gio::File::for_path(path);
+            let video = gtk::Video::builder()
+                .file(&file)
+                .autoplay(true)
+                .loop_(true)
+                .hexpand(true)
+                .vexpand(true)
+                .build();
+            container.append(&video);
         } else if is_text && large {
             let buffer = sourceview::Buffer::new(None);
             let view = sourceview::View::with_buffer(&buffer);

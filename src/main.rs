@@ -2,6 +2,7 @@ mod column;
 mod preview;
 mod sidebar;
 mod icon_view;
+mod utils;
 
 use libadwaita as adw;
 use adw::prelude::*;
@@ -335,6 +336,23 @@ fn setup_actions(app: &Application) {
         }
     });
     app.add_action(&view_type_action);
+
+    let sort_type_action = gio::SimpleAction::new_stateful("sort-type", Some(glib::VariantTy::new("s").unwrap()), &settings.value("sort-type"));
+    let app_weak_st = app.downgrade();
+    let settings_st = settings.clone();
+    sort_type_action.connect_change_state(move |action, state| {
+        if let Some(state) = state {
+            action.set_state(&state);
+            let _ = settings_st.set_value("sort-type", &state);
+            if let Some(app) = app_weak_st.upgrade() {
+                glib::idle_add_local(move || {
+                    app.activate();
+                    glib::ControlFlow::Break
+                });
+            }
+        }
+    });
+    app.add_action(&sort_type_action);
 }
 
 fn build_ui(app: &Application) {
@@ -400,6 +418,11 @@ fn build_ui(app: &Application) {
         .map(|a| a.state().unwrap().get::<String>().unwrap())
         .unwrap_or_else(|| "miller".to_string());
 
+    let sort_type = app.lookup_action("sort-type")
+        .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
+        .map(|a| a.state().unwrap().get::<String>().unwrap())
+        .unwrap_or_else(|| "name".to_string());
+
     let view_menu = gio::Menu::new();
     view_menu.append(Some("Miller Columns"), Some("app.view-type::miller"));
     view_menu.append(Some("Icons View"), Some("app.view-type::icons"));
@@ -417,6 +440,19 @@ fn build_ui(app: &Application) {
         .menu_model(&view_menu)
         .build();
     header_bar.pack_start(&view_type_btn);
+
+    // Sort Menu
+    let sort_menu = gio::Menu::new();
+    sort_menu.append(Some("Sort by Name"), Some("app.sort-type::name"));
+    sort_menu.append(Some("Sort by Date"), Some("app.sort-type::date"));
+    sort_menu.append(Some("Sort by Size"), Some("app.sort-type::size"));
+
+    let sort_type_btn = gtk::MenuButton::builder()
+        .icon_name("view-sort-ascending-symbolic")
+        .tooltip_text("Sort Options")
+        .menu_model(&sort_menu)
+        .build();
+    header_bar.pack_start(&sort_type_btn);
 
     // Zoom Controls
     let zoom_group = Box::builder()
@@ -475,7 +511,7 @@ fn build_ui(app: &Application) {
 
     scrolled_window.set_child(Some(&columns_box));
 
-    let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level));
+    let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level, sort_type));
     ACTIVE_MANAGER.with(|m| *m.borrow_mut() = Some(manager.clone()));
 
     if show_sidebar {
@@ -489,22 +525,12 @@ fn build_ui(app: &Application) {
             let settings = gio::Settings::new("com.example.ArchFinder");
             let _ = settings.set_string("current-path", &path.to_string_lossy());
 
-            let view_type: String = settings.get("view-type");
-            if view_type == "icons" {
-                if let Some(app) = gio::Application::default() {
-                    glib::idle_add_local(move || {
-                        app.activate();
-                        glib::ControlFlow::Break
-                    });
-                }
-            } else {
-                let manager_clone = manager_sidebar_clone.clone();
-                glib::idle_add_local(move || {
-                    let path = path.clone();
-                    manager_clone.add_column(path, 0);
-                    glib::ControlFlow::Break
-                });
-            }
+            let manager_clone = manager_sidebar_clone.clone();
+            glib::idle_add_local(move || {
+                let path = path.clone();
+                manager_clone.add_column(path, 0);
+                glib::ControlFlow::Break
+            });
         });
 
         let sep = gtk::Separator::new(Orientation::Vertical);
@@ -523,8 +549,6 @@ fn build_ui(app: &Application) {
         main_content.append(&manager.scrolled_window);
         root_layout.append(&main_content);
 
-        // For Miller, we still start at Home, or do we want to start at current_path?
-        // Let's start at home as per Miller standard, but Icon View uses initial_path.
         let first_list_view = manager.add_column(glib::home_dir(), 0);
 
         window.set_content(Some(&root_layout));
@@ -535,10 +559,20 @@ fn build_ui(app: &Application) {
             lv.grab_focus();
         }
     } else if view_type == "icons" {
-        let icon_view = IconView::new(&initial_path, show_hidden, show_meta, zoom_level);
+        let current_path = manager.current_selection.borrow().as_ref()
+            .map(|s| {
+                if s.path.is_dir() {
+                    s.path.clone()
+                } else {
+                    s.path.parent().unwrap_or(&s.path).to_path_buf()
+                }
+            })
+            .unwrap_or_else(|| initial_path.clone());
+            
+        let icon_view = IconView::new(&current_path, show_hidden, show_meta, zoom_level, &manager.sort_type);
         
         let manager_icon_clone = manager.clone();
-        let path_icon_clone = initial_path.clone();
+        let path_icon_clone = current_path.clone();
         icon_view.grid_view.model().unwrap().connect_selection_changed(move |selection_model, _, _| {
             let selection_model = selection_model.downcast_ref::<gtk::SingleSelection>().unwrap();
             manager_icon_clone.handle_selection_change(selection_model, &path_icon_clone, 0);
@@ -603,19 +637,21 @@ struct ColumnManager {
     show_hidden: bool,
     show_meta: bool,
     zoom_level: i32,
+    sort_type: String,
     entries: Rc<RefCell<Vec<ColumnEntry>>>,
     current_selection: Rc<RefCell<Option<SelectionInfo>>>,
     preview_window: Rc<RefCell<Option<adw::Window>>>,
 }
 
 impl ColumnManager {
-    fn new(columns_box: Box, scrolled_window: ScrolledWindow, show_hidden: bool, show_meta: bool, zoom_level: i32) -> Self {
+    fn new(columns_box: Box, scrolled_window: ScrolledWindow, show_hidden: bool, show_meta: bool, zoom_level: i32, sort_type: String) -> Self {
         Self {
             columns_box,
             scrolled_window,
             show_hidden,
             show_meta,
             zoom_level,
+            sort_type,
             entries: Rc::new(RefCell::new(Vec::new())),
             current_selection: Rc::new(RefCell::new(None)),
             preview_window: Rc::new(RefCell::new(None)),
@@ -706,7 +742,7 @@ impl ColumnManager {
             }
         }
 
-        let column = Column::new(&path, self.show_hidden, self.show_meta, self.zoom_level);
+        let column = Column::new(&path, self.show_hidden, self.show_meta, self.zoom_level, &self.sort_type);
         let column_widget = column.widget.clone().upcast::<gtk::Widget>();
         let list_view = column.list_view.clone();
         

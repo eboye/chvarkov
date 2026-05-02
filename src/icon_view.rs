@@ -1,5 +1,6 @@
 use gtk4 as gtk;
 use gtk::prelude::*;
+use crate::utils;
 
 pub struct IconView {
     pub widget: gtk::ScrolledWindow,
@@ -7,13 +8,8 @@ pub struct IconView {
 }
 
 impl IconView {
-    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, zoom_level: i32) -> Self {
-        let file = gio::File::for_path(path);
-        let directory_list = gtk::DirectoryList::builder()
-            .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,time::modified")
-            .file(&file)
-            .monitored(true)
-            .build();
+    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, zoom_level: i32, sort_type: &str) -> Self {
+        let directory_list = utils::get_directory_list(path);
 
         let filter = gtk::CustomFilter::new(move |item| {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
@@ -26,9 +22,14 @@ impl IconView {
         });
 
         let filter_model = gtk::FilterListModel::new(Some(directory_list), Some(filter));
+        
+        let sorter = utils::create_sorter(sort_type);
+        let sort_model = gtk::SortListModel::new(Some(filter_model), Some(sorter));
+        
         let selection_model = gtk::SingleSelection::builder()
-            .model(&filter_model)
+            .model(&sort_model)
             .autoselect(false)
+            .can_unselect(true)
             .build();
 
         let factory = gtk::SignalListItemFactory::new();
@@ -98,39 +99,7 @@ impl IconView {
             
             gesture_right.connect_pressed(move |gesture, _, x, y| {
                 let widget = gesture.widget().unwrap();
-                let menu = gio::Menu::new();
-                
-                let section1 = gio::Menu::new();
-                section1.append(Some("Open"), Some("app.open"));
-                menu.append_section(None, &section1);
-
-                let section2 = gio::Menu::new();
-                section2.append(Some("Cut"), Some("app.cut"));
-                section2.append(Some("Copy"), Some("app.copy"));
-                section2.append(Some("Move to..."), Some("app.move-to"));
-                section2.append(Some("Copy to..."), Some("app.copy-to"));
-                menu.append_section(None, &section2);
-
-                let section3 = gio::Menu::new();
-                section3.append(Some("Rename..."), Some("app.rename"));
-                section3.append(Some("Create Link"), Some("app.create-link"));
-                section3.append(Some("Compress..."), Some("app.compress"));
-                section3.append(Some("Email..."), Some("app.email"));
-                section3.append(Some("Move to Trash"), Some("app.delete"));
-                menu.append_section(None, &section3);
-
-                let section4 = gio::Menu::new();
-                section4.append(Some("Open in Terminal"), Some("app.open-terminal"));
-                section4.append(Some("Copy Path"), Some("app.copy-path"));
-                section4.append(Some("Copy URI"), Some("app.copy-uri"));
-                section4.append(Some("Copy Name"), Some("app.copy-name"));
-                section4.append(Some("Sharing Options"), Some("app.sharing-options"));
-                menu.append_section(None, &section4);
-
-                let section5 = gio::Menu::new();
-                section5.append(Some("Properties"), Some("app.properties"));
-                menu.append_section(None, &section5);
-
+                let menu = utils::create_context_menu();
                 let popover = gtk::PopoverMenu::from_model(Some(&menu));
                 popover.set_parent(&widget);
                 popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
@@ -143,10 +112,7 @@ impl IconView {
             key_controller.connect_key_pressed(move |_, key, _, modifier| {
                 if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
                     let widget = container_clone.clone().upcast::<gtk::Widget>();
-                    let menu = gio::Menu::new();
-                    let section1 = gio::Menu::new();
-                    section1.append(Some("Open"), Some("app.open"));
-                    menu.append_section(None, &section1);
+                    let menu = utils::create_context_menu();
                     let popover = gtk::PopoverMenu::from_model(Some(&menu));
                     popover.set_parent(&widget);
                     let width = widget.width();
@@ -197,11 +163,18 @@ impl IconView {
             .build();
         
         grid_view.connect_activate(move |_, _| {
-            // Trigger the global 'open' action
             if let Some(app) = gio::Application::default() {
                 app.activate_action("open", None);
             }
         });
+
+        // Click-to-deselect on empty space
+        let click_gesture = gtk::GestureClick::builder().button(1).build();
+        let sel_clone = selection_model.clone();
+        click_gesture.connect_pressed(move |_, _, _, _| {
+             // can_unselect(true) allows this via selection model
+        });
+        grid_view.add_controller(click_gesture);
 
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)

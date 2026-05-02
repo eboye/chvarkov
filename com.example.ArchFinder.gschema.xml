@@ -31,5 +31,10 @@
       <summary>Current path</summary>
       <description>The currently active directory path.</description>
     </key>
+    <key name="sort-type" type="s">
+      <default>'name'</default>
+      <summary>Sort type</summary>
+      <description>The method used to sort files (name, date, size).</description>
+    </key>
   </schema>
 </schemalist>
