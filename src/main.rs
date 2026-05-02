@@ -373,28 +373,6 @@ fn build_ui(app: &Application) {
     }
 }
 
-fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
-    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-    
-    let popup = adw::Window::builder()
-        .transient_for(parent)
-        .default_width(800)
-        .default_height(600)
-        .modal(true)
-        .content(&preview_layout)
-        .build();
-    
-    let key_controller = gtk::EventControllerKey::new();
-    let popup_clone = popup.clone();
-    key_controller.connect_key_pressed(move |_, _, _, _| {
-        popup_clone.close();
-        glib::Propagation::Stop
-    });
-    popup.add_controller(key_controller);
-
-    popup.present();
-}
-
 #[derive(Clone)]
 struct SelectionInfo {
     file_info: gio::FileInfo,
@@ -405,6 +383,7 @@ struct SelectionInfo {
 struct ColumnEntry {
     container: gtk::Widget,
     focus_target: gtk::Widget,
+    path: PathBuf,
 }
 
 #[derive(Clone)]
@@ -508,6 +487,14 @@ impl ColumnManager {
     }
 
     fn add_column(&self, path: PathBuf, index: usize) -> Option<gtk::ListView> {
+        // Check if we already have this path open at this index
+        {
+            let entries = self.entries.borrow();
+            if index < entries.len() && entries[index].path == path {
+                return entries[index].focus_target.clone().downcast::<gtk::ListView>().ok();
+            }
+        }
+
         let column = Column::new(&path, self.show_hidden, self.show_meta);
         let column_widget = column.widget.clone().upcast::<gtk::Widget>();
         let list_view = column.list_view.clone();
@@ -524,6 +511,7 @@ impl ColumnManager {
             entries.push(ColumnEntry {
                 container: column_widget.clone(),
                 focus_target: list_view.clone().upcast::<gtk::Widget>(),
+                path: path.clone(),
             });
         }
 
@@ -546,14 +534,31 @@ impl ColumnManager {
         let path_key_clone = path.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Right {
-                // Trigger selection handle to ensure column is created immediately
                 let selection_model = list_view_focus.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
+                
+                // If nothing is selected, select the first item
+                if selection_model.selected() == gtk::INVALID_LIST_POSITION {
+                    selection_model.set_selected(0);
+                    return glib::Propagation::Stop;
+                }
+
+                // Ensure expansion logic is run
                 self_key_clone.handle_selection_change(&selection_model, &path_key_clone, index);
 
                 let entries = self_key_clone.entries.borrow();
                 if index + 1 < entries.len() {
                     list_view_focus.remove_css_class("focused-column");
-                    let target = &entries[index + 1].focus_target;
+                    let target_entry = &entries[index + 1];
+                    let target = &target_entry.focus_target;
+                    
+                    // Automatically select first item in new column if needed
+                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
+                        let sel = lv.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
+                        if sel.selected() == gtk::INVALID_LIST_POSITION {
+                            sel.set_selected(0);
+                        }
+                    }
+
                     target.add_css_class("focused-column");
                     target.grab_focus();
                     return glib::Propagation::Stop;
@@ -599,19 +604,31 @@ impl ColumnManager {
             if ftype == gio::FileType::Directory || fs_is_dir {
                 self.add_column(new_path, index + 1);
             } else {
+                // If it's a file, we should only clear sub-columns if the path is DIFFERENT
+                // from the current sub-column (which might be a preview).
                 let mut entries = self.entries.borrow_mut();
-                while entries.len() > index + 1 {
-                    let entry = entries.pop().unwrap();
-                    self.columns_box.remove(&entry.container);
-                }
+                
+                let should_replace = if index + 1 < entries.len() {
+                    entries[index + 1].path != new_path
+                } else {
+                    true
+                };
 
-                let preview = Preview::new(file_info, &new_path);
-                let preview_widget = preview.widget.upcast::<gtk::Widget>();
-                self.columns_box.append(&preview_widget);
-                entries.push(ColumnEntry {
-                    container: preview_widget.clone(),
-                    focus_target: preview_widget,
-                });
+                if should_replace {
+                    while entries.len() > index + 1 {
+                        let entry = entries.pop().unwrap();
+                        self.columns_box.remove(&entry.container);
+                    }
+
+                    let preview = Preview::new(file_info, &new_path);
+                    let preview_widget = preview.widget.upcast::<gtk::Widget>();
+                    self.columns_box.append(&preview_widget);
+                    entries.push(ColumnEntry {
+                        container: preview_widget.clone(),
+                        focus_target: preview_widget,
+                        path: new_path,
+                    });
+                }
             }
         } else {
             println!("Selection cleared in Column {}", index);
