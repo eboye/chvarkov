@@ -76,7 +76,7 @@ impl ListView {
             let container = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
-                .focusable(true) // Ensure the content box is focusable to catch shortcuts
+                .focusable(true) // Crucial for catching keyboard events
                 .build();
             
             let image = gtk::Image::new();
