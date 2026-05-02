@@ -294,14 +294,11 @@ fn build_ui(app: &Application) {
 
         let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
         
-        // Connect the preview action
         let preview_action = app.lookup_action("preview").unwrap().downcast::<gio::SimpleAction>().unwrap();
         let manager_preview_clone = manager.clone();
         let window_preview_clone = window.clone();
         preview_action.connect_activate(move |_, _| {
-            if let Some(selection) = manager_preview_clone.current_selection.borrow().as_ref() {
-                show_preview_popup(&window_preview_clone, selection);
-            }
+            manager_preview_clone.toggle_preview(&window_preview_clone);
         });
 
         let first_list_view = manager.add_column(glib::home_dir(), 0);
@@ -320,29 +317,6 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&content));
         window.present();
     }
-}
-
-fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
-    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-    
-    let popup = adw::Window::builder()
-        .transient_for(parent)
-        .default_width(800)
-        .default_height(600)
-        .modal(true)
-        .content(&preview_layout)
-        .build();
-    
-    // Close on any key press
-    let key_controller = gtk::EventControllerKey::new();
-    let popup_clone = popup.clone();
-    key_controller.connect_key_pressed(move |_, _, _, _| {
-        popup_clone.close();
-        glib::Propagation::Stop
-    });
-    popup.add_controller(key_controller);
-
-    popup.present();
 }
 
 #[derive(Clone)]
@@ -364,6 +338,7 @@ struct ColumnManager {
     show_meta: bool,
     entries: Rc<RefCell<Vec<ColumnEntry>>>,
     current_selection: Rc<RefCell<Option<SelectionInfo>>>,
+    preview_window: Rc<RefCell<Option<adw::Window>>>,
 }
 
 impl ColumnManager {
@@ -374,6 +349,86 @@ impl ColumnManager {
             show_meta,
             entries: Rc::new(RefCell::new(Vec::new())),
             current_selection: Rc::new(RefCell::new(None)),
+            preview_window: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    fn toggle_preview(&self, parent: &ApplicationWindow) {
+        let mut window_slot = self.preview_window.borrow_mut();
+        if let Some(window) = window_slot.take() {
+            window.close();
+        } else if let Some(selection) = self.current_selection.borrow().as_ref() {
+            let window = self.create_preview_window(parent, selection);
+            window.present();
+            *window_slot = Some(window);
+        }
+    }
+
+    fn create_preview_window(&self, parent: &ApplicationWindow, selection: &SelectionInfo) -> adw::Window {
+        let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+        
+        let window = adw::Window::builder()
+            .transient_for(parent)
+            .default_width(800)
+            .default_height(600)
+            .modal(true)
+            .content(&preview_layout)
+            .build();
+        
+        let manager_clone = self.clone();
+        let window_clone = window.clone();
+        
+        // Handle closing via the 'X' button
+        window.connect_close_request(move |_| {
+            *manager_clone.preview_window.borrow_mut() = None;
+            glib::Propagation::Proceed
+        });
+
+        // Key navigation inside preview window
+        let key_controller = gtk::EventControllerKey::new();
+        let manager_key_clone = self.clone();
+        key_controller.connect_key_pressed(move |_, key, _, _| {
+            match key {
+                gtk::gdk::Key::Escape | gtk::gdk::Key::space => {
+                    window_clone.close();
+                    glib::Propagation::Stop
+                }
+                gtk::gdk::Key::Up | gtk::gdk::Key::Down => {
+                    // Find the focused list view and move selection
+                    if let Some(lv) = manager_key_clone.get_focused_list_view() {
+                        let selection_model = lv.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
+                        let current = selection_model.selected();
+                        if key == gtk::gdk::Key::Up && current > 0 {
+                            selection_model.set_selected(current - 1);
+                        } else if key == gtk::gdk::Key::Down {
+                            selection_model.set_selected(current + 1);
+                        }
+                    }
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            }
+        });
+        window.add_controller(key_controller);
+        window
+    }
+
+    fn get_focused_list_view(&self) -> Option<gtk::ListView> {
+        let entries = self.entries.borrow();
+        for entry in entries.iter() {
+            if entry.focus_target.has_css_class("focused-column") {
+                return entry.focus_target.clone().downcast::<gtk::ListView>().ok();
+            }
+        }
+        None
+    }
+
+    fn update_preview_if_open(&self) {
+        if let Some(window) = self.preview_window.borrow().as_ref() {
+            if let Some(selection) = self.current_selection.borrow().as_ref() {
+                let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+                window.set_content(Some(&preview_layout));
+            }
         }
     }
 
@@ -412,6 +467,8 @@ impl ColumnManager {
                     file_info: file_info.clone(),
                     path: new_path.clone(),
                 });
+                
+                self_clone.update_preview_if_open();
 
                 if file_info.file_type() == gio::FileType::Directory {
                     self_clone.add_column(new_path, index + 1);
