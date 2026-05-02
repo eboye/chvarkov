@@ -2,6 +2,7 @@ mod column;
 mod preview;
 mod sidebar;
 mod icon_view;
+mod list_view;
 mod utils;
 
 use libadwaita as adw;
@@ -14,6 +15,7 @@ use column::Column;
 use preview::Preview;
 use sidebar::Sidebar;
 use icon_view::IconView;
+use list_view::ListView;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -45,21 +47,21 @@ fn setup_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data("
         /* Focused list selection - Vibrant accent color */
-        .focused-column row:selected, .focused-grid row:selected {
+        .focused-column row:selected, .focused-grid row:selected, .focused-list row:selected {
             background-color: @accent_bg_color;
             color: @accent_fg_color;
             border-radius: 6px;
         }
 
         /* Unfocused list selection (parent columns) - Subdued color */
-        listview row:selected, gridview row:selected {
+        listview row:selected, gridview row:selected, columnview row:selected {
             background-color: alpha(@accent_bg_color, 0.2);
             color: @view_fg_color;
             border-radius: 6px;
         }
 
         /* Hover effect for rows */
-        listview row:hover:not(:selected), gridview row:hover:not(:selected) {
+        listview row:hover:not(:selected), gridview row:hover:not(:selected), columnview row:hover:not(:selected) {
             background-color: alpha(@accent_bg_color, 0.05);
         }
 
@@ -114,6 +116,19 @@ fn setup_styles() {
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+}
+
+fn get_selection_model(widget: &gtk::Widget) -> Option<gtk::MultiSelection> {
+    if let Ok(lv) = widget.clone().downcast::<gtk::ListView>() {
+        return lv.model().and_downcast::<gtk::MultiSelection>();
+    }
+    if let Ok(gv) = widget.clone().downcast::<gtk::GridView>() {
+        return gv.model().and_downcast::<gtk::MultiSelection>();
+    }
+    if let Ok(cv) = widget.clone().downcast::<gtk::ColumnView>() {
+        return cv.model().and_downcast::<gtk::MultiSelection>();
+    }
+    None
 }
 
 fn setup_actions(app: &Application) {
@@ -254,8 +269,9 @@ fn setup_actions(app: &Application) {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
                 if let Some(lv) = manager.get_focused_list_view() {
-                    let selection_model = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                    selection_model.select_all();
+                    if let Some(sm) = get_selection_model(&lv) {
+                        sm.select_all();
+                    }
                 }
             }
         });
@@ -268,8 +284,9 @@ fn setup_actions(app: &Application) {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
                 if let Some(lv) = manager.get_focused_list_view() {
-                    let selection_model = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                    selection_model.unselect_all();
+                    if let Some(sm) = get_selection_model(&lv) {
+                        sm.unselect_all();
+                    }
                 }
             }
         });
@@ -282,13 +299,14 @@ fn setup_actions(app: &Application) {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
                 if let Some(lv) = manager.get_focused_list_view() {
-                    let selection_model = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                    let n_items = selection_model.n_items();
-                    for i in 0..n_items {
-                        if selection_model.is_selected(i) {
-                            selection_model.unselect_item(i);
-                        } else {
-                            selection_model.select_item(i, false);
+                    if let Some(sm) = get_selection_model(&lv) {
+                        let n_items = sm.n_items();
+                        for i in 0..n_items {
+                            if sm.is_selected(i) {
+                                sm.unselect_item(i);
+                            } else {
+                                sm.select_item(i, false);
+                            }
                         }
                     }
                 }
@@ -824,7 +842,7 @@ fn build_ui(app: &Application) {
             });
 
             let view_type: String = settings.get("view-type");
-            if view_type == "icons" {
+            if view_type == "icons" || view_type == "list" {
                 if let Some(app) = gio::Application::default() {
                     glib::idle_add_local(move || {
                         app.activate();
@@ -886,6 +904,25 @@ fn build_ui(app: &Application) {
         
         icon_view.grid_view.add_css_class("focused-grid");
         icon_view.grid_view.grab_focus();
+        manager.set_main_view(icon_view.grid_view.clone().upcast::<gtk::Widget>());
+    } else if view_type == "list" {
+        let list_view_widget = ListView::new(&initial_path, show_hidden, show_meta, zoom_level, &manager.sort_type, folders_first);
+        
+        let manager_list_clone = manager.clone();
+        let path_list_clone = initial_path.clone();
+        list_view_widget.column_view.model().unwrap().connect_selection_changed(move |selection_model, _, _| {
+            let selection_model = selection_model.downcast_ref::<gtk::MultiSelection>().unwrap();
+            manager_list_clone.handle_selection_change_multi(selection_model, &path_list_clone, 0);
+        });
+
+        main_content.append(&list_view_widget.widget);
+        root_layout.append(&main_content);
+        window.set_content(Some(&root_layout));
+        window.present();
+        
+        list_view_widget.column_view.add_css_class("focused-list");
+        list_view_widget.column_view.grab_focus();
+        manager.set_main_view(list_view_widget.column_view.clone().upcast::<gtk::Widget>());
     } else {
         let label = gtk::Label::new(Some(&format!("{} view is not yet implemented", view_type)));
         label.set_vexpand(true);
@@ -917,6 +954,7 @@ struct ColumnManager {
     scrolled_window: ScrolledWindow,
     breadcrumb_container: Rc<RefCell<Option<Box>>>,
     breadcrumb_parent: Rc<RefCell<Option<ScrolledWindow>>>,
+    main_view: Rc<RefCell<Option<gtk::Widget>>>,
     show_hidden: bool,
     show_meta: bool,
     zoom_level: i32,
@@ -934,6 +972,7 @@ impl ColumnManager {
             scrolled_window,
             breadcrumb_container: Rc::new(RefCell::new(None)),
             breadcrumb_parent: Rc::new(RefCell::new(None)),
+            main_view: Rc::new(RefCell::new(None)),
             show_hidden,
             show_meta,
             zoom_level,
@@ -943,6 +982,10 @@ impl ColumnManager {
             current_selection: Rc::new(RefCell::new(None)),
             preview_window: Rc::new(RefCell::new(None)),
         }
+    }
+
+    fn set_main_view(&self, view: gtk::Widget) {
+        *self.main_view.borrow_mut() = Some(view);
     }
 
     fn set_breadcrumb_container(&self, container: Box, parent: ScrolledWindow) {
@@ -992,7 +1035,7 @@ impl ColumnManager {
                     let _ = settings.set_string("current-path", &path.to_string_lossy());
                     
                     let view_type: String = settings.get("view-type");
-                    if view_type == "icons" {
+                    if view_type == "icons" || view_type == "list" {
                         if let Some(app) = gio::Application::default() {
                             app.activate();
                         }
@@ -1045,15 +1088,16 @@ impl ColumnManager {
                 }
                 gtk::gdk::Key::Up | gtk::gdk::Key::Down => {
                     if let Some(lv) = manager_key_clone.get_focused_list_view() {
-                        let selection_model = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                        let selection = selection_model.selection();
-                        if !selection.is_empty() {
-                             let current = selection.nth(0);
-                             if key == gtk::gdk::Key::Up && current > 0 {
-                                 selection_model.select_item(current - 1, true);
-                             } else if key == gtk::gdk::Key::Down {
-                                 selection_model.select_item(current + 1, true);
-                             }
+                        if let Some(sm) = get_selection_model(&lv) {
+                            let selection = sm.selection();
+                            if !selection.is_empty() {
+                                 let current = selection.nth(0);
+                                 if key == gtk::gdk::Key::Up && current > 0 {
+                                     sm.select_item(current - 1, true);
+                                 } else if key == gtk::gdk::Key::Down {
+                                     sm.select_item(current + 1, true);
+                                 }
+                            }
                         }
                     }
                     glib::Propagation::Stop
@@ -1065,11 +1109,18 @@ impl ColumnManager {
         window
     }
 
-    fn get_focused_list_view(&self) -> Option<gtk::ListView> {
+    fn get_focused_list_view(&self) -> Option<gtk::Widget> {
+        // 1. Check Miller Columns
         let entries = self.entries.borrow();
         for entry in entries.iter() {
-            if entry.focus_target.has_css_class("focused-column") || entry.focus_target.has_css_class("focused-grid") {
-                return entry.focus_target.clone().downcast::<gtk::ListView>().ok();
+            if entry.focus_target.has_css_class("focused-column") {
+                return Some(entry.focus_target.clone());
+            }
+        }
+        // 2. Check active Icon/List view
+        if let Some(main) = self.main_view.borrow().as_ref() {
+            if main.has_css_class("focused-grid") || main.has_css_class("focused-list") {
+                return Some(main.clone());
             }
         }
         None
@@ -1210,7 +1261,13 @@ impl ColumnManager {
         let selected_item = selection_model.model().unwrap().item(first_idx);
         
         if let Some(item) = selected_item {
-            let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
+            // Handle TreeListRow wrapping if it's a List View
+            let file_info = if let Ok(tree_row) = item.clone().downcast::<gtk::TreeListRow>() {
+                tree_row.item().and_downcast::<gio::FileInfo>().unwrap()
+            } else {
+                item.downcast_ref::<gio::FileInfo>().unwrap().clone()
+            };
+
             let name = file_info.name();
             let mut new_path = base_path.clone();
             new_path.push(&name);
@@ -1226,31 +1283,36 @@ impl ColumnManager {
             self.update_breadcrumbs(&new_path);
             self.update_preview_if_open();
 
-            if file_info.file_type() == gio::FileType::Directory || new_path.is_dir() {
-                self.add_column(new_path, index + 1);
-            } else {
-                let mut entries = self.entries.borrow_mut();
-                
-                let should_replace = if index + 1 < entries.len() {
-                    entries[index + 1].path != new_path
+            // In List View, we don't necessarily want to jump columns unless it's Miller
+            let settings = gio::Settings::new("com.example.ArchFinder");
+            let view_type: String = settings.get("view-type");
+            
+            if view_type == "miller" {
+                if file_info.file_type() == gio::FileType::Directory || new_path.is_dir() {
+                    self.add_column(new_path, index + 1);
                 } else {
-                    true
-                };
+                    let mut entries = self.entries.borrow_mut();
+                    let should_replace = if index + 1 < entries.len() {
+                        entries[index + 1].path != new_path
+                    } else {
+                        true
+                    };
 
-                if should_replace {
-                    while entries.len() > index + 1 {
-                        let entry = entries.pop().unwrap();
-                        self.columns_box.remove(&entry.container);
+                    if should_replace {
+                        while entries.len() > index + 1 {
+                            let entry = entries.pop().unwrap();
+                            self.columns_box.remove(&entry.container);
+                        }
+
+                        let preview = Preview::new(&file_info, &new_path);
+                        let preview_widget = preview.widget.upcast::<gtk::Widget>();
+                        self.columns_box.append(&preview_widget);
+                        entries.push(ColumnEntry {
+                            container: preview_widget.clone(),
+                            focus_target: preview_widget,
+                            path: new_path,
+                        });
                     }
-
-                    let preview = Preview::new(file_info, &new_path);
-                    let preview_widget = preview.widget.upcast::<gtk::Widget>();
-                    self.columns_box.append(&preview_widget);
-                    entries.push(ColumnEntry {
-                        container: preview_widget.clone(),
-                        focus_target: preview_widget,
-                        path: new_path,
-                    });
                 }
             }
         }
