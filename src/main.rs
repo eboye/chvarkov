@@ -81,12 +81,13 @@ fn setup_styles() {
 
         /* Sidebar active highlighting */
         row.sidebar-active {
-            background-color: alpha(@accent_bg_color, 0.1);
+            background-color: @accent_bg_color;
             color: @accent_fg_color;
             font-weight: bold;
+            border-radius: 6px;
         }
         row.sidebar-active image {
-            color: @accent_bg_color;
+            color: @accent_fg_color;
         }
     ");
 
