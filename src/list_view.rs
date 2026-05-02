@@ -67,7 +67,7 @@ impl ListView {
             .focusable(true)
             .build();
 
-        // 1. Name Column (with TreeExpander)
+        // 1. Name Column (with TreeExpander and Context Menu)
         let name_factory = gtk::SignalListItemFactory::new();
         name_factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
@@ -76,6 +76,7 @@ impl ListView {
             let container = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
+                .focusable(true)
                 .build();
             
             let image = gtk::Image::new();
@@ -86,6 +87,41 @@ impl ListView {
             
             container.append(&image);
             container.append(&label);
+            
+            // Context menu gesture
+            let gesture_right = gtk::GestureClick::builder()
+                .button(3)
+                .build();
+            
+            gesture_right.connect_pressed(move |gesture, _, x, y| {
+                let widget = gesture.widget().unwrap();
+                let menu = utils::create_context_menu();
+                let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                popover.set_parent(&widget);
+                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                popover.popup();
+            });
+
+            // Keyboard Menu/Shift+F10
+            let key_controller = gtk::EventControllerKey::new();
+            let container_clone = container.clone();
+            key_controller.connect_key_pressed(move |_, key, _, modifier| {
+                if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
+                    let widget = container_clone.clone().upcast::<gtk::Widget>();
+                    let menu = utils::create_context_menu();
+                    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                    popover.set_parent(&widget);
+                    let width = widget.width();
+                    let height = widget.height();
+                    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
+                    popover.popup();
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            });
+
+            container.add_controller(gesture_right);
+            container.add_controller(key_controller);
             
             expander.set_child(Some(&container));
             list_item.set_child(Some(&expander));
@@ -215,7 +251,7 @@ impl ListView {
             column_view.append_column(&size_col);
         }
 
-        // Context menu and activations
+        // activations
         column_view.connect_activate(move |_, _| {
             if let Some(app) = gio::Application::default() {
                 app.activate_action("open", None);
