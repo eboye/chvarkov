@@ -28,7 +28,7 @@ impl ListView {
         
         let sort_type_owned = sort_type.to_string();
         // Tree Model for nested expansion
-        let tree_model = gtk::TreeListModel::new(sort_model, false, true, move |item| {
+        let tree_model = gtk::TreeListModel::new(sort_model, false, false, move |item| {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
             if file_info.file_type() == gio::FileType::Directory {
                 if let Some(file) = file_info.attribute_object("standard::file").and_downcast::<gio::File>() {
