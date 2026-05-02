@@ -30,7 +30,7 @@ fn setup_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data("
         /* Focused list selection - Vibrant accent color */
-        listview:focus row:selected {
+        .focused-column row:selected {
             background-color: @accent_bg_color;
             color: @accent_fg_color;
             border-radius: 6px;
@@ -295,6 +295,7 @@ fn build_ui(app: &Application) {
         window.present();
 
         if let Some(lv) = first_list_view {
+            lv.add_css_class("focused-column");
             lv.grab_focus();
         }
     } else {
@@ -383,17 +384,24 @@ impl ColumnManager {
         // Add Key Navigation
         let key_controller = gtk::EventControllerKey::new();
         let self_key_clone = self.clone();
+        let list_view_focus = list_view.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Right {
                 let entries = self_key_clone.entries.borrow();
                 if index + 1 < entries.len() {
-                    entries[index + 1].focus_target.grab_focus();
+                    list_view_focus.remove_css_class("focused-column");
+                    let target = &entries[index + 1].focus_target;
+                    target.add_css_class("focused-column");
+                    target.grab_focus();
                     return glib::Propagation::Stop;
                 }
             } else if key == gtk::gdk::Key::Left {
                 if index > 0 {
                     let entries = self_key_clone.entries.borrow();
-                    entries[index - 1].focus_target.grab_focus();
+                    list_view_focus.remove_css_class("focused-column");
+                    let target = &entries[index - 1].focus_target;
+                    target.add_css_class("focused-column");
+                    target.grab_focus();
                     return glib::Propagation::Stop;
                 }
             }
