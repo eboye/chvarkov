@@ -106,6 +106,7 @@ impl Preview {
                 use std::io::Read;
                 let mut content = Vec::new();
                 file.take(10000).read_to_end(&mut content).ok(); // Read first 10KB
+
                 let text = String::from_utf8_lossy(&content);
                 buffer.set_text(&text);
             }

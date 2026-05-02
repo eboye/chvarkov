@@ -76,11 +76,12 @@ pub fn create_sorter(sort_type: &str) -> gtk::Sorter {
             sorter.upcast()
         },
         _ => {
-            // Revert to PropertyExpression if Closure is too complex for this build
-            let sorter = gtk::StringSorter::builder()
-                .expression(gtk::PropertyExpression::new(gio::FileInfo::static_type(), None::<&gtk::Expression>, "display-name"))
-                .ignore_case(true)
-                .build();
+            // Use CustomSorter for name to avoid PropertyExpression crash (display-name is not a GObject property)
+            let sorter = gtk::CustomSorter::new(|a, b| {
+                let a = a.downcast_ref::<gio::FileInfo>().unwrap();
+                let b = b.downcast_ref::<gio::FileInfo>().unwrap();
+                a.display_name().to_lowercase().cmp(&b.display_name().to_lowercase()).into()
+            });
             sorter.upcast()
         }
     }

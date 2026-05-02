@@ -595,28 +595,6 @@ fn build_ui(app: &Application) {
     }
 }
 
-fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
-    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-    
-    let popup = adw::Window::builder()
-        .transient_for(parent)
-        .default_width(800)
-        .default_height(600)
-        .modal(true)
-        .content(&preview_layout)
-        .build();
-    
-    let key_controller = gtk::EventControllerKey::new();
-    let popup_clone = popup.clone();
-    key_controller.connect_key_pressed(move |_, _, _, _| {
-        popup_clone.close();
-        glib::Propagation::Stop
-    });
-    popup.add_controller(key_controller);
-
-    popup.present();
-}
-
 #[derive(Clone)]
 struct SelectionInfo {
     file_info: gio::FileInfo,
