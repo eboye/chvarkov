@@ -90,6 +90,7 @@ fn setup_styles() {
             box-sizing: border-box;
             padding: 0;
             margin: 0;
+            min-height: 46px; /* Strict matching for AdwHeaderBar height */
         }
         
         .sidebar-footer-area, .breadcrumb-container-scrolled {
@@ -98,6 +99,7 @@ fn setup_styles() {
             box-sizing: border-box;
             padding: 0;
             margin: 0;
+            min-height: 40px; /* Synchronized bottom height */
         }
 
         /* Sidebar active highlighting */
@@ -578,6 +580,8 @@ fn build_ui(app: &Application) {
             .default_height(800)
             .build()
     };
+    
+    window.set_title(Some(""));
 
     let root_layout = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -592,7 +596,7 @@ fn build_ui(app: &Application) {
         .build();
 
     let header_bar = HeaderBar::builder()
-        .title_widget(&gtk::Box::new(Orientation::Horizontal, 0))
+        .title_widget(&gtk::Label::new(Some(" ")))
         .build();
 
     let toggle_sidebar_btn = gtk::ToggleButton::builder()
@@ -841,7 +845,7 @@ fn build_ui(app: &Application) {
 
         // Sync Sidebar Footer height with Breadcrumb Bar exactly
         let footer_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
-        footer_size_group.add_widget(&breadcrumb_scrolled);
+        footer_size_group.add_widget(&breadcrumb_bar);
         footer_size_group.add_widget(&sidebar.pref_footer);
 
         root_layout.append(&sidebar.widget);
