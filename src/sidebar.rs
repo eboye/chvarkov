@@ -21,16 +21,22 @@ impl Sidebar {
             .css_classes(["navigation-sidebar"])
             .build();
 
-        // App Title at top
+        // Title Area - aligned with main HeaderBar
+        let title_header = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .height_request(46) // Matching typical AdwHeaderBar height
+            .margin_start(16)
+            .build();
+
         let title_label = gtk::Label::builder()
             .label("Arch-Finder")
             .halign(gtk::Align::Start)
-            .margin_start(16)
-            .margin_top(16)
-            .margin_bottom(8)
-            .css_classes(["title-2"])
+            .valign(gtk::Align::Center)
+            .css_classes(["title-4"]) // Using a smaller title class for better sidebar fit
             .build();
-        container.append(&title_label);
+        
+        title_header.append(&title_label);
+        container.append(&title_header);
 
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
