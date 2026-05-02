@@ -3,6 +3,7 @@ use gtk::prelude::*;
 
 pub struct Column {
     pub widget: gtk::Box,
+    pub list_view: gtk::ListView,
     pub selection_model: gtk::SingleSelection,
 }
 
@@ -225,6 +226,7 @@ impl Column {
 
         Self {
             widget: container,
+            list_view,
             selection_model,
         }
     }

@@ -244,21 +244,22 @@ fn build_ui(app: &Application) {
             .unwrap_or(false);
 
         let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
-        manager.add_column(glib::home_dir(), 0);
+        let first_list_view = manager.add_column(glib::home_dir(), 0);
 
-        // Grab focus on the first column's list view after adding it
-        if let Some(first_column_widget) = manager.widgets.borrow().get(0) {
-            first_column_widget.grab_focus();
+        window.set_content(Some(&content));
+        window.present();
+
+        // Grab focus on the first column's list view AFTER window presentation
+        if let Some(lv) = first_list_view {
+            lv.grab_focus();
         }
     } else {
-
         let label = gtk::Label::new(Some(&format!("{} view is not yet implemented", view_type)));
         label.set_vexpand(true);
         content.append(&label);
+        window.set_content(Some(&content));
+        window.present();
     }
-
-    window.set_content(Some(&content));
-    window.present();
 }
 
 #[derive(Clone)]
@@ -279,9 +280,10 @@ impl ColumnManager {
         }
     }
 
-    fn add_column(&self, path: PathBuf, index: usize) {
+    fn add_column(&self, path: PathBuf, index: usize) -> Option<gtk::ListView> {
         let column = Column::new(&path, self.show_hidden, self.show_meta);
         let column_widget = column.widget.clone().upcast::<gtk::Widget>();
+        let list_view = column.list_view.clone();
         
         {
             let mut widgets = self.widgets.borrow_mut();
@@ -322,5 +324,7 @@ impl ColumnManager {
                 }
             }
         });
+
+        Some(list_view)
     }
 }
