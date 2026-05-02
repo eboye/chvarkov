@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="com.example.ArchFinder" path="/com/example/ArchFinder/">
+    <key name="show-hidden" type="b">
+      <default>false</default>
+      <summary>Show hidden files</summary>
+      <description>Whether to show hidden files in the file lists.</description>
+    </key>
+    <key name="show-meta" type="b">
+      <default>false</default>
+      <summary>Show metadata</summary>
+      <description>Whether to show file metadata like modified date in the columns.</description>
+    </key>
+    <key name="zoom-level" type="i">
+      <default>0</default>
+      <summary>Zoom level</summary>
+      <description>The current zoom level of the application.</description>
+    </key>
+    <key name="view-type" type="s">
+      <default>'miller'</default>
+      <summary>View type</summary>
+      <description>The current view mode (miller, icons, list).</description>
+    </key>
+    <key name="show-sidebar" type="b">
+      <default>true</default>
+      <summary>Show sidebar</summary>
+      <description>Whether the navigation sidebar is visible.</description>
+    </key>
+  </schema>
+</schemalist>

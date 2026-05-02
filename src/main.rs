@@ -22,6 +22,11 @@ thread_local! {
 }
 
 fn main() {
+    // For development, point GSETTINGS_SCHEMA_DIR to our compiled schemas
+    unsafe {
+        std::env::set_var("GSETTINGS_SCHEMA_DIR", "./compiled_schemas");
+    }
+
     let application = Application::builder()
         .application_id("com.example.ArchFinder")
         .build();
@@ -82,6 +87,8 @@ fn setup_styles() {
 }
 
 fn setup_actions(app: &Application) {
+    let settings = gio::Settings::new("com.example.ArchFinder");
+
     let quit_action = gio::SimpleAction::new("quit", None);
     let app_weak = app.downgrade();
     quit_action.connect_activate(move |_, _| {
@@ -185,24 +192,29 @@ fn setup_actions(app: &Application) {
     app.add_action(&preview_action);
     app.set_accels_for_action("app.preview", &["space"]);
 
-    let toggle_sidebar_action = gio::SimpleAction::new_stateful("toggle-sidebar", None, &true.to_variant());
+    // Use GSettings for persistent actions
+    let toggle_sidebar_action = gio::SimpleAction::new_stateful("show-sidebar", None, &settings.value("show-sidebar"));
     let app_weak_s = app.downgrade();
+    let settings_s = settings.clone();
     toggle_sidebar_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(state);
+            action.set_state(&state);
+            settings_s.set_value("show-sidebar", &state);
             if let Some(app) = app_weak_s.upgrade() {
                 app.activate();
             }
         }
     });
     app.add_action(&toggle_sidebar_action);
-    app.set_accels_for_action("app.toggle-sidebar", &["F9"]);
+    app.set_accels_for_action("app.show-sidebar", &["F9"]);
 
-    let show_hidden_action = gio::SimpleAction::new_stateful("show-hidden", None, &false.to_variant());
+    let show_hidden_action = gio::SimpleAction::new_stateful("show-hidden", None, &settings.value("show-hidden"));
     let app_weak_h = app.downgrade();
+    let settings_h = settings.clone();
     show_hidden_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(state);
+            action.set_state(&state);
+            settings_h.set_value("show-hidden", &state);
             if let Some(app) = app_weak_h.upgrade() {
                 app.activate();
             }
@@ -211,11 +223,13 @@ fn setup_actions(app: &Application) {
     app.add_action(&show_hidden_action);
     app.set_accels_for_action("app.show-hidden", &["<Control>h"]);
 
-    let show_meta_action = gio::SimpleAction::new_stateful("show-meta", None, &false.to_variant());
+    let show_meta_action = gio::SimpleAction::new_stateful("show-meta", None, &settings.value("show-meta"));
     let app_weak_m = app.downgrade();
+    let settings_m = settings.clone();
     show_meta_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(state);
+            action.set_state(&state);
+            settings_m.set_value("show-meta", &state);
             if let Some(app) = app_weak_m.upgrade() {
                 app.activate();
             }
@@ -224,13 +238,15 @@ fn setup_actions(app: &Application) {
     app.add_action(&show_meta_action);
     app.set_accels_for_action("app.show-meta", &["<Control>m"]);
 
-    let zoom_action = gio::SimpleAction::new_stateful("zoom", Some(glib::VariantTy::new("i").unwrap()), &0.to_variant());
+    let zoom_action = gio::SimpleAction::new_stateful("zoom-level", Some(glib::VariantTy::new("i").unwrap()), &settings.value("zoom-level"));
     let app_weak_z = app.downgrade();
+    let settings_z = settings.clone();
     zoom_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
             let val = state.get::<i32>().unwrap();
             if val >= 0 && val <= 5 {
                 action.set_state(&val.to_variant());
+                settings_z.set_value("zoom-level", &val.to_variant());
                 if let Some(app) = app_weak_z.upgrade() {
                     app.activate();
                 }
@@ -243,9 +259,9 @@ fn setup_actions(app: &Application) {
     let app_weak_zi = app.downgrade();
     zoom_in_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_zi.upgrade() {
-            if let Some(action) = app.lookup_action("zoom") {
+            if let Some(action) = app.lookup_action("zoom-level") {
                 let current = action.downcast::<gio::SimpleAction>().unwrap().state().unwrap().get::<i32>().unwrap();
-                app.activate_action("zoom", Some(&(current + 1).to_variant()));
+                app.activate_action("zoom-level", Some(&(current + 1).to_variant()));
             }
         }
     });
@@ -256,20 +272,22 @@ fn setup_actions(app: &Application) {
     let app_weak_zo = app.downgrade();
     zoom_out_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_zo.upgrade() {
-            if let Some(action) = app.lookup_action("zoom") {
+            if let Some(action) = app.lookup_action("zoom-level") {
                 let current = action.downcast::<gio::SimpleAction>().unwrap().state().unwrap().get::<i32>().unwrap();
-                app.activate_action("zoom", Some(&(current - 1).to_variant()));
+                app.activate_action("zoom-level", Some(&(current - 1).to_variant()));
             }
         }
     });
     app.add_action(&zoom_out_action);
     app.set_accels_for_action("app.zoom-out", &["<Control>minus"]);
 
-    let view_type_action = gio::SimpleAction::new_stateful("view-type", Some(glib::VariantTy::new("s").unwrap()), &"miller".to_variant());
+    let view_type_action = gio::SimpleAction::new_stateful("view-type", Some(glib::VariantTy::new("s").unwrap()), &settings.value("view-type"));
     let app_weak_v = app.downgrade();
+    let settings_v = settings.clone();
     view_type_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(state);
+            action.set_state(&state);
+            settings_v.set_value("view-type", &state);
             if let Some(app) = app_weak_v.upgrade() {
                 app.activate();
             }
@@ -308,7 +326,7 @@ fn build_ui(app: &Application) {
     let toggle_sidebar_btn = gtk::ToggleButton::builder()
         .icon_name("sidebar-show-symbolic")
         .tooltip_text("Toggle Sidebar (F9)")
-        .action_name("app.toggle-sidebar")
+        .action_name("app.show-sidebar")
         .build();
     header_bar.pack_start(&toggle_sidebar_btn);
 
@@ -383,7 +401,7 @@ fn build_ui(app: &Application) {
 
     main_content.append(&header_bar);
 
-    let show_sidebar = app.lookup_action("toggle-sidebar")
+    let show_sidebar = app.lookup_action("show-sidebar")
         .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
         .map(|a| a.state().unwrap().get::<bool>().unwrap())
         .unwrap_or(true);
@@ -398,7 +416,7 @@ fn build_ui(app: &Application) {
         .map(|a| a.state().unwrap().get::<bool>().unwrap())
         .unwrap_or(false);
 
-    let zoom_level = app.lookup_action("zoom")
+    let zoom_level = app.lookup_action("zoom-level")
         .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
         .map(|a| a.state().unwrap().get::<i32>().unwrap())
         .unwrap_or(0);
