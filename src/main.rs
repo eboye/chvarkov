@@ -489,11 +489,22 @@ fn build_ui(app: &Application) {
             let settings = gio::Settings::new("com.example.ArchFinder");
             let _ = settings.set_string("current-path", &path.to_string_lossy());
 
-            let manager_clone = manager_sidebar_clone.clone();
-            glib::idle_add_local(move || {
-                manager_clone.add_column(path.clone(), 0);
-                glib::ControlFlow::Break
-            });
+            let view_type: String = settings.get("view-type");
+            if view_type == "icons" {
+                if let Some(app) = gio::Application::default() {
+                    glib::idle_add_local(move || {
+                        app.activate();
+                        glib::ControlFlow::Break
+                    });
+                }
+            } else {
+                let manager_clone = manager_sidebar_clone.clone();
+                glib::idle_add_local(move || {
+                    let path = path.clone();
+                    manager_clone.add_column(path, 0);
+                    glib::ControlFlow::Break
+                });
+            }
         });
 
         let sep = gtk::Separator::new(Orientation::Vertical);
@@ -524,7 +535,7 @@ fn build_ui(app: &Application) {
             lv.grab_focus();
         }
     } else if view_type == "icons" {
-        let icon_view = IconView::new(&initial_path, show_hidden, zoom_level);
+        let icon_view = IconView::new(&initial_path, show_hidden, show_meta, zoom_level);
         
         let manager_icon_clone = manager.clone();
         let path_icon_clone = initial_path.clone();

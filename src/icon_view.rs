@@ -7,10 +7,10 @@ pub struct IconView {
 }
 
 impl IconView {
-    pub fn new(path: &std::path::Path, show_hidden: bool, zoom_level: i32) -> Self {
+    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, zoom_level: i32) -> Self {
         let file = gio::File::for_path(path);
         let directory_list = gtk::DirectoryList::builder()
-            .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden")
+            .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,time::modified")
             .file(&file)
             .monitored(true)
             .build();
@@ -65,15 +65,31 @@ impl IconView {
             let label = gtk::Label::builder()
                 .halign(gtk::Align::Center)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
-                .lines(2)
+                .lines(1)
                 .max_width_chars(10)
-                .wrap(true)
-                .wrap_mode(gtk::pango::WrapMode::WordChar)
                 .justify(gtk::Justification::Center)
                 .build();
 
             container.append(&image);
             container.append(&label);
+
+            if show_meta {
+                let meta_label = gtk::Label::builder()
+                    .halign(gtk::Align::Center)
+                    .ellipsize(gtk::pango::EllipsizeMode::End)
+                    .lines(1)
+                    .max_width_chars(10)
+                    .css_classes(["caption", "dim-label"])
+                    .justify(gtk::Justification::Center)
+                    .build();
+                
+                let attrs = gtk::pango::AttrList::new();
+                let font_attr = gtk::pango::AttrSize::new(8 * gtk::pango::SCALE);
+                attrs.insert(font_attr);
+                meta_label.set_attributes(Some(&attrs));
+                
+                container.append(&meta_label);
+            }
 
             // Context menu gesture
             let gesture_right = gtk::GestureClick::builder()
@@ -159,6 +175,16 @@ impl IconView {
             if let Some(icon) = file_info.icon() {
                 image.set_from_gicon(&icon);
             }
+
+            if show_meta {
+                if let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
+                    if let Some(date_time) = file_info.modification_date_time() {
+                        if let Ok(formatted) = date_time.format("%Y-%m-%d") {
+                            meta_label.set_text(&formatted);
+                        }
+                    }
+                }
+            }
         });
 
         let grid_view = gtk::GridView::builder()
@@ -172,8 +198,9 @@ impl IconView {
         
         grid_view.connect_activate(move |_, _| {
             // Trigger the global 'open' action
-            let app = gio::Application::default().unwrap();
-            app.activate_action("open", None);
+            if let Some(app) = gio::Application::default() {
+                app.activate_action("open", None);
+            }
         });
 
         let scrolled_window = gtk::ScrolledWindow::builder()
