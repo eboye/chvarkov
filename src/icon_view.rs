@@ -36,13 +36,14 @@ impl IconView {
         let icon_size = match zoom_level {
             0 => 48,
             1 => 64,
-            2 => 96,
-            3 => 128,
-            4 => 160,
-            _ => 192,
+            2 => 80,
+            3 => 96,
+            4 => 112,
+            _ => 128,
         };
 
-        let item_width = icon_size + 40;
+        // Item width is icon_size + horizontal padding
+        let item_width = icon_size + 24;
 
         factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
@@ -65,7 +66,9 @@ impl IconView {
                 .halign(gtk::Align::Center)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
                 .lines(2)
-                .max_width_chars(15)
+                .max_width_chars(10) // More aggressive truncation
+                .wrap(true)
+                .wrap_mode(gtk::pango::WrapMode::WordChar)
                 .justify(gtk::Justification::Center)
                 .build();
 
