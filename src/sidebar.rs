@@ -30,7 +30,7 @@ impl Sidebar {
             .build();
 
         let title_label = gtk::Label::builder()
-            .label("Arch-Finder")
+            .label("chvarkov")
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Center) // Strictly center
             .margin_start(16)

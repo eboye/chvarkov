@@ -1,6 +1,6 @@
-# Arch-Finder Engineering Guidelines
+# chvarkov Engineering Guidelines
 
-This document establishes foundational mandates and technical standards for the **Arch-Finder** project. All future development and AI-assisted modifications MUST strictly adhere to these rules.
+This document establishes foundational mandates and technical standards for the **chvarkov** project. All future development and AI-assisted modifications MUST strictly adhere to these rules.
 
 ## 🎯 Core Mandates
 

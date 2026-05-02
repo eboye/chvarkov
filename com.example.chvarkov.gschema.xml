@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <schema id="com.example.ArchFinder" path="/com/example/ArchFinder/">
+  <schema id="com.example.chvarkov" path="/com/example/chvarkov/">
     <key name="show-hidden" type="b">
       <default>false</default>
       <summary>Show hidden files</summary>

@@ -1,8 +1,8 @@
-# Arch-Finder 📂
+# chvarkov 📂
 
-**Arch-Finder** is a modern, high-performance file manager designed for the GNOME desktop. It brings the efficiency of macOS-style **Miller Columns** to Linux, built from the ground up using **Rust**, **GTK4**, and **Libadwaita**.
+**chvarkov** is a modern, high-performance file manager designed for the GNOME desktop. It brings the efficiency of macOS-style **Miller Columns** to Linux, built from the ground up using **Rust**, **GTK4**, and **Libadwaita**.
 
-![Arch-Finder Screenshot Placeholder]
+![chvarkov Screenshot Placeholder]
 
 ## ✨ Features
 
@@ -34,7 +34,7 @@
 
 ### Prerequisites
 
-To build Arch-Finder, you need the Rust toolchain and the GTK4/Libadwaita development libraries:
+To build chvarkov, you need the Rust toolchain and the GTK4/Libadwaita development libraries:
 
 - **Rust:** [Install Rust](https://www.rust-lang.org/tools/install)
 - **GTK4 & Libadwaita:** 

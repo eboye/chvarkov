@@ -31,7 +31,7 @@ fn main() {
     }
 
     let application = Application::builder()
-        .application_id("com.example.ArchFinder")
+        .application_id("com.example.chvarkov")
         .build();
 
     application.connect_startup(|app| {
@@ -178,7 +178,7 @@ fn get_selection_model(widget: &gtk::Widget) -> Option<gtk::MultiSelection> {
 }
 
 fn setup_actions(app: &Application) {
-    let settings = gio::Settings::new("com.example.ArchFinder");
+    let settings = gio::Settings::new("com.example.chvarkov");
 
     let quit_action = gio::SimpleAction::new("quit", None);
     let app_weak = app.downgrade();
@@ -201,7 +201,7 @@ fn setup_actions(app: &Application) {
                     let is_dir = file_info.file_type() == gio::FileType::Directory || path.is_dir();
                     
                     if is_dir {
-                        let settings = gio::Settings::new("com.example.ArchFinder");
+                        let settings = gio::Settings::new("com.example.chvarkov");
                         let _ = settings.set_string("current-path", &path.to_string_lossy());
                         
                         if let Some(app) = gio::Application::default() {
@@ -510,7 +510,7 @@ fn setup_actions(app: &Application) {
 
 fn show_preferences_window(app: &Application) {
     let window = app.active_window().unwrap();
-    let settings = gio::Settings::new("com.example.ArchFinder");
+    let settings = gio::Settings::new("com.example.chvarkov");
 
     let pref_window = adw::PreferencesWindow::builder()
         .transient_for(&window)
@@ -769,7 +769,7 @@ fn build_ui(app: &Application) {
 
     main_content.append(&header_bar);
 
-    let settings = gio::Settings::new("com.example.ArchFinder");
+    let settings = gio::Settings::new("com.example.chvarkov");
     
     // Responsive labels logic
     let view_label_weak = view_btn_label.downgrade();
@@ -895,7 +895,7 @@ fn build_ui(app: &Application) {
     sidebar.list_box.connect_row_activated(move |list_box, list_row| {
         let path_string = list_row.widget_name();
         let path = PathBuf::from(path_string.as_str());
-        let settings = gio::Settings::new("com.example.ArchFinder");
+        let settings = gio::Settings::new("com.example.chvarkov");
         let _ = settings.set_string("current-path", &path.to_string_lossy());
 
         // Update highlighting
@@ -1089,7 +1089,7 @@ impl ColumnManager {
                 let manager_clone = self.clone();
                 btn.connect_clicked(move |_| {
                     let path = p_clone.clone();
-                    let settings = gio::Settings::new("com.example.ArchFinder");
+                    let settings = gio::Settings::new("com.example.chvarkov");
                     let _ = settings.set_string("current-path", &path.to_string_lossy());
                     
                     let view_type: String = settings.get("view-type");
@@ -1343,7 +1343,7 @@ impl ColumnManager {
             self.update_preview_if_open();
 
             // In List View, we don't necessarily want to jump columns unless it's Miller
-            let settings = gio::Settings::new("com.example.ArchFinder");
+            let settings = gio::Settings::new("com.example.chvarkov");
             let view_type: String = settings.get("view-type");
             
             if view_type == "miller" {

@@ -3,17 +3,6 @@
 version = 4
 
 [[package]]
-name = "arch-finder"
-version = "0.1.0"
-dependencies = [
- "gio",
- "glib",
- "gtk4",
- "libadwaita",
- "sourceview5",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -56,6 +45,17 @@ checksum = "3c6b04e07d8080154ed4ac03546d9a2b303cc2fe1901ba0b35b301516e289368"
 dependencies = [
  "smallvec",
  "target-lexicon",
+]
+
+[[package]]
+name = "chvarkov"
+version = "0.1.0"
+dependencies = [
+ "gio",
+ "glib",
+ "gtk4",
+ "libadwaita",
+ "sourceview5",
 ]
 
 [[package]]
