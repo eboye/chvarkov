@@ -82,14 +82,17 @@ fn setup_styles() {
             border-right: 1px solid alpha(@borders, 0.3);
         }
 
-        .sidebar-title-area {
+        /* Standardize Header and Footer backgrounds to match precisely */
+        .sidebar-title-area, headerbar {
+            background-color: @window_bg_color;
             border-bottom: 1px solid alpha(@borders, 0.3);
             box-sizing: border-box;
             padding: 0;
             margin: 0;
         }
         
-        .sidebar-footer-area {
+        .sidebar-footer-area, .breadcrumb-container-scrolled {
+            background-color: @window_bg_color;
             border-top: 1px solid alpha(@borders, 0.3);
             box-sizing: border-box;
             padding: 0;
@@ -109,11 +112,6 @@ fn setup_styles() {
 
         .breadcrumb-bar {
             background-color: @window_bg_color;
-        }
-        
-        .breadcrumb-container-scrolled {
-            border-top: 1px solid alpha(@borders, 0.3);
-            box-sizing: border-box;
         }
 
         .breadcrumb-bar button {
@@ -1113,7 +1111,7 @@ impl ColumnManager {
                         if let Some(sm) = get_selection_model(&lv) {
                             let selection = sm.selection();
                             if !selection.is_empty() {
-                                 let current = selection.nth(0);
+                                 let current = selection.minimum();
                                  if key == gtk::gdk::Key::Up && current > 0 {
                                      sm.select_item(current - 1, true);
                                  } else if key == gtk::gdk::Key::Down {
@@ -1279,7 +1277,7 @@ impl ColumnManager {
         }
 
         // For previews and navigation, we use the first selected item
-        let first_idx = selection.nth(0);
+        let first_idx = selection.minimum();
         let selected_item = selection_model.model().unwrap().item(first_idx);
         
         if let Some(item) = selected_item {
