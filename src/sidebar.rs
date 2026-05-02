@@ -21,6 +21,17 @@ impl Sidebar {
             .css_classes(["navigation-sidebar"])
             .build();
 
+        // App Title at top
+        let title_label = gtk::Label::builder()
+            .label("Arch-Finder")
+            .halign(gtk::Align::Start)
+            .margin_start(16)
+            .margin_top(16)
+            .margin_bottom(8)
+            .css_classes(["title-2"])
+            .build();
+        container.append(&title_label);
+
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
             .build();

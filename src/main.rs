@@ -574,7 +574,6 @@ fn build_ui(app: &Application) {
         .build();
 
     let header_bar = HeaderBar::builder()
-        .title_widget(&adw::WindowTitle::new("Arch-Finder", ""))
         .build();
 
     let toggle_sidebar_btn = gtk::ToggleButton::builder()
