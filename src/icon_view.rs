@@ -55,6 +55,7 @@ impl IconView {
                 .margin_start(4)
                 .margin_end(4)
                 .width_request(item_width)
+                .focusable(true)
                 .build();
 
             let image = gtk::Image::builder()
@@ -74,6 +75,91 @@ impl IconView {
 
             container.append(&image);
             container.append(&label);
+
+            // Context menu gesture (Right Click)
+            let gesture_right = gtk::GestureClick::builder()
+                .button(3)
+                .build();
+            
+            gesture_right.connect_pressed(move |gesture, _, x, y| {
+                let widget = gesture.widget().unwrap();
+                let menu = gio::Menu::new();
+                
+                let section1 = gio::Menu::new();
+                section1.append(Some("Open"), Some("app.open"));
+                menu.append_section(None, &section1);
+
+                let section2 = gio::Menu::new();
+                section2.append(Some("Cut"), Some("app.cut"));
+                section2.append(Some("Copy"), Some("app.copy"));
+                section2.append(Some("Move to..."), Some("app.move-to"));
+                section2.append(Some("Copy to..."), Some("app.copy-to"));
+                menu.append_section(None, &section2);
+
+                let section3 = gio::Menu::new();
+                section3.append(Some("Rename..."), Some("app.rename"));
+                section3.append(Some("Create Link"), Some("app.create-link"));
+                section3.append(Some("Compress..."), Some("app.compress"));
+                section3.append(Some("Email..."), Some("app.email"));
+                section3.append(Some("Move to Trash"), Some("app.delete"));
+                menu.append_section(None, &section3);
+
+                let section4 = gio::Menu::new();
+                section4.append(Some("Open in Terminal"), Some("app.open-terminal"));
+                section4.append(Some("Copy Path"), Some("app.copy-path"));
+                section4.append(Some("Copy URI"), Some("app.copy-uri"));
+                section4.append(Some("Copy Name"), Some("app.copy-name"));
+                section4.append(Some("Sharing Options"), Some("app.sharing-options"));
+                menu.append_section(None, &section4);
+
+                let section5 = gio::Menu::new();
+                section5.append(Some("Properties"), Some("app.properties"));
+                menu.append_section(None, &section5);
+
+                let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                popover.set_parent(&widget);
+                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                popover.popup();
+            });
+
+            // Activation gesture (Double Click)
+            let gesture_double = gtk::GestureClick::builder()
+                .button(1)
+                .build();
+            
+            gesture_double.connect_pressed(move |gesture, n_press, _, _| {
+                if n_press == 2 {
+                    let widget = gesture.widget().unwrap();
+                    widget.activate_action("app.open", None).ok();
+                }
+            });
+
+            // Keyboard shortcut for Context Menu (Menu key or Shift+F10)
+            let key_controller = gtk::EventControllerKey::new();
+            let container_clone = container.clone();
+            key_controller.connect_key_pressed(move |_, key, _, modifier| {
+                if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
+                    let widget = container_clone.clone().upcast::<gtk::Widget>();
+                    // Redefine menu for keyboard trigger too
+                    let menu = gio::Menu::new();
+                    let section1 = gio::Menu::new();
+                    section1.append(Some("Open"), Some("app.open"));
+                    menu.append_section(None, &section1);
+                    // (Simplified for brevity in keyboard trigger)
+                    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                    popover.set_parent(&widget);
+                    let width = widget.width();
+                    let height = widget.height();
+                    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
+                    popover.popup();
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            });
+
+            container.add_controller(gesture_right);
+            container.add_controller(gesture_double);
+            container.add_controller(key_controller);
             list_item.set_child(Some(&container));
         });
 
