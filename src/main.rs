@@ -89,6 +89,19 @@ fn setup_styles() {
         row.sidebar-active image {
             color: @accent_fg_color;
         }
+
+        .breadcrumb-bar {
+            background-color: @window_bg_color;
+            border-top: 1px solid alpha(@borders, 0.3);
+        }
+        .breadcrumb-bar button {
+            padding: 4px 8px;
+            font-size: 0.9rem;
+        }
+        .breadcrumb-bar button:hover {
+            background-color: alpha(@accent_bg_color, 0.1);
+            color: @accent_bg_color;
+        }
     ");
 
     gtk::style_context_add_provider_for_display(
@@ -589,6 +602,24 @@ fn build_ui(app: &Application) {
     let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level, sort_type));
     ACTIVE_MANAGER.with(|m| *m.borrow_mut() = Some(manager.clone()));
 
+    // Breadcrumb Bar
+    let breadcrumb_bar = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .css_classes(["linked", "breadcrumb-bar"])
+        .margin_top(4)
+        .margin_bottom(4)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+    
+    let breadcrumb_scrolled = ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .child(&breadcrumb_bar)
+        .build();
+    
+    manager.set_breadcrumb_container(breadcrumb_bar.clone());
+
     let settings = gio::Settings::new("com.example.ArchFinder");
     let current_path_str: String = settings.get("current-path");
     let initial_path = if current_path_str.is_empty() {
@@ -697,6 +728,8 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&root_layout));
         window.present();
     }
+
+    main_content.append(&breadcrumb_scrolled);
 }
 
 #[derive(Clone)]
@@ -716,6 +749,7 @@ struct ColumnEntry {
 struct ColumnManager {
     columns_box: Box,
     scrolled_window: ScrolledWindow,
+    breadcrumb_container: Rc<RefCell<Option<Box>>>,
     show_hidden: bool,
     show_meta: bool,
     zoom_level: i32,
@@ -730,6 +764,7 @@ impl ColumnManager {
         Self {
             columns_box,
             scrolled_window,
+            breadcrumb_container: Rc::new(RefCell::new(None)),
             show_hidden,
             show_meta,
             zoom_level,
@@ -737,6 +772,61 @@ impl ColumnManager {
             entries: Rc::new(RefCell::new(Vec::new())),
             current_selection: Rc::new(RefCell::new(None)),
             preview_window: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    fn set_breadcrumb_container(&self, container: Box) {
+        *self.breadcrumb_container.borrow_mut() = Some(container);
+    }
+
+    fn update_breadcrumbs(&self, path: &std::path::Path) {
+        if let Some(container) = self.breadcrumb_container.borrow().as_ref() {
+            while let Some(child) = container.first_child() {
+                container.remove(&child);
+            }
+
+            let mut parts = Vec::new();
+            let mut current = Some(path);
+            while let Some(p) = current {
+                if let Some(name) = p.file_name() {
+                    parts.push((name.to_string_lossy().to_string(), p.to_path_buf()));
+                } else if p.to_string_lossy() == "/" {
+                    parts.push(("/".to_string(), p.to_path_buf()));
+                }
+                current = p.parent();
+            }
+            parts.reverse();
+
+            for (i, (name, p)) in parts.iter().enumerate() {
+                if i > 0 {
+                    let sep = gtk::Label::new(Some(" / "));
+                    sep.add_css_class("dim-label");
+                    container.append(&sep);
+                }
+
+                let btn = gtk::Button::builder()
+                    .label(name)
+                    .has_frame(false)
+                    .build();
+                
+                let p_clone = p.clone();
+                let manager_clone = self.clone();
+                btn.connect_clicked(move |_| {
+                    let path = p_clone.clone();
+                    let settings = gio::Settings::new("com.example.ArchFinder");
+                    let _ = settings.set_string("current-path", &path.to_string_lossy());
+                    
+                    let view_type: String = settings.get("view-type");
+                    if view_type == "icons" {
+                        if let Some(app) = gio::Application::default() {
+                            app.activate();
+                        }
+                    } else {
+                        manager_clone.add_column(path, 0);
+                    }
+                });
+                container.append(&btn);
+            }
         }
     }
 
@@ -927,6 +1017,7 @@ impl ColumnManager {
         if selection.is_empty() {
             println!("Selection cleared in Column {}", index);
             *self.current_selection.borrow_mut() = None;
+            self.update_breadcrumbs(base_path);
             
             // Clear subsequent columns
             let mut entries = self.entries.borrow_mut();
@@ -957,6 +1048,7 @@ impl ColumnManager {
                 path: new_path.clone(),
             });
             
+            self.update_breadcrumbs(&new_path);
             self.update_preview_if_open();
 
             if file_info.file_type() == gio::FileType::Directory || new_path.is_dir() {
