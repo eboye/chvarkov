@@ -5,6 +5,7 @@ use crate::utils;
 pub struct IconView {
     pub widget: gtk::ScrolledWindow,
     pub grid_view: gtk::GridView,
+    pub selection_model: gtk::MultiSelection,
 }
 
 impl IconView {
@@ -26,11 +27,7 @@ impl IconView {
         let sorter = utils::create_sorter(sort_type);
         let sort_model = gtk::SortListModel::new(Some(filter_model), Some(sorter));
         
-        let selection_model = gtk::SingleSelection::builder()
-            .model(&sort_model)
-            .autoselect(false)
-            .can_unselect(true)
-            .build();
+        let selection_model = gtk::MultiSelection::new(Some(sort_model));
 
         let factory = gtk::SignalListItemFactory::new();
         
@@ -186,6 +183,7 @@ impl IconView {
         Self {
             widget: scrolled_window,
             grid_view,
+            selection_model,
         }
     }
 }

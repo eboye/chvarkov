@@ -5,7 +5,7 @@ use crate::utils;
 pub struct Column {
     pub widget: gtk::Box,
     pub list_view: gtk::ListView,
-    pub selection_model: gtk::SingleSelection,
+    pub selection_model: gtk::MultiSelection,
 }
 
 impl Column {
@@ -27,11 +27,7 @@ impl Column {
         let sorter = utils::create_sorter(sort_type);
         let sort_model = gtk::SortListModel::new(Some(filter_model), Some(sorter));
         
-        let selection_model = gtk::SingleSelection::builder()
-            .model(&sort_model)
-            .autoselect(false)
-            .can_unselect(true)
-            .build();
+        let selection_model = gtk::MultiSelection::new(Some(sort_model));
         
         let factory = gtk::SignalListItemFactory::new();
         

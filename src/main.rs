@@ -230,6 +230,56 @@ fn setup_actions(app: &Application) {
     app.add_action(&preview_action);
     app.set_accels_for_action("app.preview", &["space"]);
 
+    // Selection Actions
+    let select_all_action = gio::SimpleAction::new("select-all", None);
+    select_all_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                if let Some(lv) = manager.get_focused_list_view() {
+                    let selection_model = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
+                    selection_model.select_all();
+                }
+            }
+        });
+    });
+    app.add_action(&select_all_action);
+    app.set_accels_for_action("app.select-all", &["<Control>a"]);
+
+    let select_none_action = gio::SimpleAction::new("select-none", None);
+    select_none_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                if let Some(lv) = manager.get_focused_list_view() {
+                    let selection_model = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
+                    selection_model.unselect_all();
+                }
+            }
+        });
+    });
+    app.add_action(&select_none_action);
+    app.set_accels_for_action("app.select-none", &["<Control><Shift>a"]);
+
+    let invert_selection_action = gio::SimpleAction::new("invert-selection", None);
+    invert_selection_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                if let Some(lv) = manager.get_focused_list_view() {
+                    let selection_model = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
+                    let n_items = selection_model.n_items();
+                    for i in 0..n_items {
+                        if selection_model.is_selected(i) {
+                            selection_model.unselect_item(i);
+                        } else {
+                            selection_model.select_item(i, false);
+                        }
+                    }
+                }
+            }
+        });
+    });
+    app.add_action(&invert_selection_action);
+    app.set_accels_for_action("app.invert-selection", &["<Control>i"]);
+
     // Use GSettings for persistent actions
     let toggle_sidebar_action = gio::SimpleAction::new_stateful("show-sidebar", None, &settings.value("show-sidebar"));
     let app_weak_s = app.downgrade();
@@ -247,7 +297,7 @@ fn setup_actions(app: &Application) {
         }
     });
     app.add_action(&toggle_sidebar_action);
-    app.set_accels_for_action("app.show-sidebar", &["F9"]);
+    app.set_accels_for_action("app.toggle-sidebar", &["F9"]);
 
     let show_hidden_action = gio::SimpleAction::new_stateful("show-hidden", None, &settings.value("show-hidden"));
     let app_weak_h = app.downgrade();
@@ -615,8 +665,8 @@ fn build_ui(app: &Application) {
         let manager_icon_clone = manager.clone();
         let path_icon_clone = current_path.clone();
         icon_view.grid_view.model().unwrap().connect_selection_changed(move |selection_model, _, _| {
-            let selection_model = selection_model.downcast_ref::<gtk::SingleSelection>().unwrap();
-            manager_icon_clone.handle_selection_change(selection_model, &path_icon_clone, 0);
+            let selection_model = selection_model.downcast_ref::<gtk::MultiSelection>().unwrap();
+            manager_icon_clone.handle_selection_change_multi(selection_model, &path_icon_clone, 0);
         });
 
         main_content.append(&icon_view.widget);
@@ -634,6 +684,28 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&root_layout));
         window.present();
     }
+}
+
+fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
+    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+    
+    let popup = adw::Window::builder()
+        .transient_for(parent)
+        .default_width(800)
+        .default_height(600)
+        .modal(true)
+        .content(&preview_layout)
+        .build();
+    
+    let key_controller = gtk::EventControllerKey::new();
+    let popup_clone = popup.clone();
+    key_controller.connect_key_pressed(move |_, _, _, _| {
+        popup_clone.close();
+        glib::Propagation::Stop
+    });
+    popup.add_controller(key_controller);
+
+    popup.present();
 }
 
 #[derive(Clone)]
@@ -717,12 +789,15 @@ impl ColumnManager {
                 }
                 gtk::gdk::Key::Up | gtk::gdk::Key::Down => {
                     if let Some(lv) = manager_key_clone.get_focused_list_view() {
-                        let selection_model = lv.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
-                        let current = selection_model.selected();
-                        if key == gtk::gdk::Key::Up && current > 0 {
-                            selection_model.set_selected(current - 1);
-                        } else if key == gtk::gdk::Key::Down {
-                            selection_model.set_selected(current + 1);
+                        let selection_model = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
+                        let selection = selection_model.selection();
+                        if !selection.is_empty() {
+                             let current = selection.nth(0);
+                             if key == gtk::gdk::Key::Up && current > 0 {
+                                 selection_model.select_item(current - 1, true);
+                             } else if key == gtk::gdk::Key::Down {
+                                 selection_model.select_item(current + 1, true);
+                             }
                         }
                     }
                     glib::Propagation::Stop
@@ -792,10 +867,10 @@ impl ColumnManager {
         let index_clone = index;
         column.selection_model.connect_selection_changed(move |selection_model, _, _| {
             let self_idle = self_clone.clone();
-            let selection_idle = selection_model.clone();
+            let selection_idle = selection_model.clone().downcast::<gtk::MultiSelection>().unwrap();
             let path_idle = path_clone.clone();
             glib::idle_add_local(move || {
-                self_idle.handle_selection_change(&selection_idle, &path_idle, index_clone);
+                self_idle.handle_selection_change_multi(&selection_idle, &path_idle, index_clone);
                 glib::ControlFlow::Break
             });
         });
@@ -806,14 +881,14 @@ impl ColumnManager {
         let path_key_clone = path.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Right {
-                let selection_model = list_view_focus.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
+                let selection_model = list_view_focus.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
                 
-                if selection_model.selected() == gtk::INVALID_LIST_POSITION {
-                    selection_model.set_selected(0);
+                if selection_model.selection().is_empty() {
+                    selection_model.select_item(0, true);
                     return glib::Propagation::Stop;
                 }
 
-                self_key_clone.handle_selection_change(&selection_model, &path_key_clone, index);
+                self_key_clone.handle_selection_change_multi(&selection_model, &path_key_clone, index);
 
                 let entries = self_key_clone.entries.borrow();
                 if index + 1 < entries.len() {
@@ -822,9 +897,9 @@ impl ColumnManager {
                     let target = &target_entry.focus_target;
                     
                     if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
-                        let sel = lv.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
-                        if sel.selected() == gtk::INVALID_LIST_POSITION {
-                            sel.set_selected(0);
+                        let sel = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
+                        if sel.selection().is_empty() {
+                            sel.select_item(0, true);
                         }
                     }
 
@@ -842,8 +917,8 @@ impl ColumnManager {
                     target.grab_focus();
 
                     if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
-                        let sel = lv.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
-                        self_key_clone.handle_selection_change(&sel, &target_entry.path, index - 1);
+                        let sel = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
+                        self_key_clone.handle_selection_change_multi(&sel, &target_entry.path, index - 1);
                     }
                     
                     return glib::Propagation::Stop;
@@ -856,19 +931,26 @@ impl ColumnManager {
         Some(list_view)
     }
 
-    fn handle_selection_change(&self, selection_model: &gtk::SingleSelection, base_path: &PathBuf, index: usize) {
-        let selected_item = selection_model.selected_item();
+    fn handle_selection_change_multi(&self, selection_model: &gtk::MultiSelection, base_path: &PathBuf, index: usize) {
+        let selection = selection_model.selection();
+        if selection.is_empty() {
+            println!("Selection cleared in Column {}", index);
+            *self.current_selection.borrow_mut() = None;
+            return;
+        }
+
+        // For previews and navigation, we use the first selected item
+        let first_idx = selection.nth(0);
+        let selected_item = selection_model.model().unwrap().item(first_idx);
+        
         if let Some(item) = selected_item {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
             let name = file_info.name();
             let mut new_path = base_path.clone();
             new_path.push(&name);
 
-            let ftype = file_info.file_type();
-            let fs_is_dir = new_path.is_dir();
-            
             println!("Selection [Column {}]: {:?} | Type: {:?} | FS is_dir: {}", 
-                     index, new_path, ftype, fs_is_dir);
+                     index, new_path, file_info.file_type(), new_path.is_dir());
 
             *self.current_selection.borrow_mut() = Some(SelectionInfo {
                 file_info: file_info.clone(),
@@ -877,7 +959,7 @@ impl ColumnManager {
             
             self.update_preview_if_open();
 
-            if ftype == gio::FileType::Directory || fs_is_dir {
+            if file_info.file_type() == gio::FileType::Directory || new_path.is_dir() {
                 self.add_column(new_path, index + 1);
             } else {
                 let mut entries = self.entries.borrow_mut();
@@ -904,8 +986,6 @@ impl ColumnManager {
                     });
                 }
             }
-        } else {
-            println!("Selection cleared in Column {}", index);
         }
     }
 }
