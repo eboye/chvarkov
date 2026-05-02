@@ -167,8 +167,9 @@ impl IconView {
 
         // Click-to-deselect on empty space
         let click_gesture = gtk::GestureClick::builder().button(1).build();
+        let sel_model_clone = selection_model.clone();
         click_gesture.connect_pressed(move |_, _, _, _| {
-             // can_unselect(true) allows this via selection model
+             sel_model_clone.unselect_all();
         });
         grid_view.add_controller(click_gesture);
 

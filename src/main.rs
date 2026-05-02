@@ -686,28 +686,6 @@ fn build_ui(app: &Application) {
     }
 }
 
-fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
-    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-    
-    let popup = adw::Window::builder()
-        .transient_for(parent)
-        .default_width(800)
-        .default_height(600)
-        .modal(true)
-        .content(&preview_layout)
-        .build();
-    
-    let key_controller = gtk::EventControllerKey::new();
-    let popup_clone = popup.clone();
-    key_controller.connect_key_pressed(move |_, _, _, _| {
-        popup_clone.close();
-        glib::Propagation::Stop
-    });
-    popup.add_controller(key_controller);
-
-    popup.present();
-}
-
 #[derive(Clone)]
 struct SelectionInfo {
     file_info: gio::FileInfo,
@@ -936,6 +914,15 @@ impl ColumnManager {
         if selection.is_empty() {
             println!("Selection cleared in Column {}", index);
             *self.current_selection.borrow_mut() = None;
+            
+            // Clear subsequent columns
+            let mut entries = self.entries.borrow_mut();
+            while entries.len() > index + 1 {
+                let entry = entries.pop().unwrap();
+                self.columns_box.remove(&entry.container);
+            }
+            
+            self.update_preview_if_open();
             return;
         }
 
