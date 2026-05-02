@@ -100,7 +100,34 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.quit", &["<Control>q"]);
 
     let open_action = gio::SimpleAction::new("open", None);
-    open_action.connect_activate(|_, _| println!("Open action triggered"));
+    open_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                if let Some(selection) = manager.current_selection.borrow().as_ref() {
+                    let file_info = &selection.file_info;
+                    let path = &selection.path;
+                    
+                    let is_dir = file_info.file_type() == gio::FileType::Directory || path.is_dir();
+                    
+                    if is_dir {
+                        // For Icon View, we update the path. For Miller, it's already handled.
+                        // We check the current view type.
+                        let settings = gio::Settings::new("com.example.ArchFinder");
+                        let view_type: String = settings.get("view-type");
+                        if view_type == "icons" {
+                             if let Some(app) = gio::Application::default() {
+                                 app.activate(); // Refresh UI to new path
+                             }
+                        }
+                    } else {
+                        // Launch default application
+                        let file = gio::File::for_path(path);
+                        gio::AppInfo::launch_default_for_uri(&file.uri(), None::<&gio::AppLaunchContext>).ok();
+                    }
+                }
+            }
+        });
+    });
     app.add_action(&open_action);
     app.set_accels_for_action("app.open", &["Return"]);
 
@@ -199,7 +226,7 @@ fn setup_actions(app: &Application) {
     toggle_sidebar_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
             action.set_state(&state);
-            settings_s.set_value("show-sidebar", &state);
+            let _ = settings_s.set_value("show-sidebar", &state);
             if let Some(app) = app_weak_s.upgrade() {
                 app.activate();
             }
@@ -214,7 +241,7 @@ fn setup_actions(app: &Application) {
     show_hidden_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
             action.set_state(&state);
-            settings_h.set_value("show-hidden", &state);
+            let _ = settings_h.set_value("show-hidden", &state);
             if let Some(app) = app_weak_h.upgrade() {
                 app.activate();
             }
@@ -229,7 +256,7 @@ fn setup_actions(app: &Application) {
     show_meta_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
             action.set_state(&state);
-            settings_m.set_value("show-meta", &state);
+            let _ = settings_m.set_value("show-meta", &state);
             if let Some(app) = app_weak_m.upgrade() {
                 app.activate();
             }
@@ -246,7 +273,7 @@ fn setup_actions(app: &Application) {
             let val = state.get::<i32>().unwrap();
             if val >= 0 && val <= 5 {
                 action.set_state(&val.to_variant());
-                settings_z.set_value("zoom-level", &val.to_variant());
+                let _ = settings_z.set_value("zoom-level", &val.to_variant());
                 if let Some(app) = app_weak_z.upgrade() {
                     app.activate();
                 }
@@ -287,7 +314,7 @@ fn setup_actions(app: &Application) {
     view_type_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
             action.set_state(&state);
-            settings_v.set_value("view-type", &state);
+            let _ = settings_v.set_value("view-type", &state);
             if let Some(app) = app_weak_v.upgrade() {
                 app.activate();
             }
@@ -467,7 +494,13 @@ fn build_ui(app: &Application) {
         }
     } else if view_type == "icons" {
         let current_path = manager.current_selection.borrow().as_ref()
-            .map(|s| s.path.parent().unwrap_or(&s.path).to_path_buf())
+            .map(|s| {
+                if s.path.is_dir() {
+                    s.path.clone()
+                } else {
+                    s.path.parent().unwrap_or(&s.path).to_path_buf()
+                }
+            })
             .unwrap_or_else(glib::home_dir);
             
         let icon_view = IconView::new(&current_path, show_hidden, zoom_level);
@@ -494,6 +527,28 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&root_layout));
         window.present();
     }
+}
+
+fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
+    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+    
+    let popup = adw::Window::builder()
+        .transient_for(parent)
+        .default_width(800)
+        .default_height(600)
+        .modal(true)
+        .content(&preview_layout)
+        .build();
+    
+    let key_controller = gtk::EventControllerKey::new();
+    let popup_clone = popup.clone();
+    key_controller.connect_key_pressed(move |_, _, _, _| {
+        popup_clone.close();
+        glib::Propagation::Stop
+    });
+    popup.add_controller(key_controller);
+
+    popup.present();
 }
 
 #[derive(Clone)]
@@ -595,7 +650,7 @@ impl ColumnManager {
     fn get_focused_list_view(&self) -> Option<gtk::ListView> {
         let entries = self.entries.borrow();
         for entry in entries.iter() {
-            if entry.focus_target.has_css_class("focused-column") {
+            if entry.focus_target.has_css_class("focused-column") || entry.focus_target.has_css_class("focused-grid") {
                 return entry.focus_target.clone().downcast::<gtk::ListView>().ok();
             }
         }

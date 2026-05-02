@@ -42,7 +42,6 @@ impl IconView {
             _ => 128,
         };
 
-        // Item width is icon_size + horizontal padding
         let item_width = icon_size + 24;
 
         factory.connect_setup(move |_, list_item| {
@@ -67,7 +66,7 @@ impl IconView {
                 .halign(gtk::Align::Center)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
                 .lines(2)
-                .max_width_chars(10) // More aggressive truncation
+                .max_width_chars(10)
                 .wrap(true)
                 .wrap_mode(gtk::pango::WrapMode::WordChar)
                 .justify(gtk::Justification::Center)
@@ -76,7 +75,7 @@ impl IconView {
             container.append(&image);
             container.append(&label);
 
-            // Context menu gesture (Right Click)
+            // Context menu gesture
             let gesture_right = gtk::GestureClick::builder()
                 .button(3)
                 .build();
@@ -122,30 +121,16 @@ impl IconView {
                 popover.popup();
             });
 
-            // Activation gesture (Double Click)
-            let gesture_double = gtk::GestureClick::builder()
-                .button(1)
-                .build();
-            
-            gesture_double.connect_pressed(move |gesture, n_press, _, _| {
-                if n_press == 2 {
-                    let widget = gesture.widget().unwrap();
-                    widget.activate_action("app.open", None).ok();
-                }
-            });
-
-            // Keyboard shortcut for Context Menu (Menu key or Shift+F10)
+            // Keyboard shortcut for Context Menu
             let key_controller = gtk::EventControllerKey::new();
             let container_clone = container.clone();
             key_controller.connect_key_pressed(move |_, key, _, modifier| {
                 if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
                     let widget = container_clone.clone().upcast::<gtk::Widget>();
-                    // Redefine menu for keyboard trigger too
                     let menu = gio::Menu::new();
                     let section1 = gio::Menu::new();
                     section1.append(Some("Open"), Some("app.open"));
                     menu.append_section(None, &section1);
-                    // (Simplified for brevity in keyboard trigger)
                     let popover = gtk::PopoverMenu::from_model(Some(&menu));
                     popover.set_parent(&widget);
                     let width = widget.width();
@@ -158,7 +143,6 @@ impl IconView {
             });
 
             container.add_controller(gesture_right);
-            container.add_controller(gesture_double);
             container.add_controller(key_controller);
             list_item.set_child(Some(&container));
         });
@@ -177,16 +161,20 @@ impl IconView {
             }
         });
 
-        // To make it adapt to window width, we use max_columns(0) which means "as many as fit"
-        // in newer GTK, or just rely on the ScrolledWindow + GridView default behavior.
-        // We set max_columns to a high number to allow wrapping.
         let grid_view = gtk::GridView::builder()
             .model(&selection_model)
             .factory(&factory)
             .max_columns(100) 
             .min_columns(1)
             .enable_rubberband(true)
+            .focusable(true)
             .build();
+        
+        grid_view.connect_activate(move |_, _| {
+            // Trigger the global 'open' action
+            let app = gio::Application::default().unwrap();
+            app.activate_action("open", None);
+        });
 
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
