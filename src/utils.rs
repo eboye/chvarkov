@@ -49,7 +49,29 @@ pub fn get_directory_list(path: &std::path::Path) -> gtk::DirectoryList {
 }
 
 pub fn create_sorter(sort_type: &str, folders_first: bool) -> gtk::Sorter {
-    let base_sorter: gtk::Sorter = match sort_type {
+    let multi_sorter = gtk::MultiSorter::new();
+
+    // 1. Folders First (Primary if enabled)
+    if folders_first {
+        let folders_sorter = gtk::CustomSorter::new(|a, b| {
+            let a = a.downcast_ref::<gio::FileInfo>().unwrap();
+            let b = b.downcast_ref::<gio::FileInfo>().unwrap();
+            let a_is_dir = a.file_type() == gio::FileType::Directory;
+            let b_is_dir = b.file_type() == gio::FileType::Directory;
+
+            if a_is_dir && !b_is_dir {
+                gtk::Ordering::Smaller
+            } else if !a_is_dir && b_is_dir {
+                gtk::Ordering::Larger
+            } else {
+                gtk::Ordering::Equal
+            }
+        });
+        multi_sorter.append(folders_sorter);
+    }
+
+    // 2. User-Selected Sorter
+    let primary_sorter: gtk::Sorter = match sort_type {
         "date" => {
             let sorter = gtk::CustomSorter::new(|a, b| {
                 let a = a.downcast_ref::<gio::FileInfo>().unwrap();
@@ -94,28 +116,17 @@ pub fn create_sorter(sort_type: &str, folders_first: bool) -> gtk::Sorter {
             sorter.upcast()
         }
     };
+    multi_sorter.append(primary_sorter);
 
-    if folders_first {
-        let folders_sorter = gtk::CustomSorter::new(|a, b| {
+    // 3. Fallback Name Sorter (Ensures deterministic sort for identical values)
+    if sort_type != "name" && !sort_type.is_empty() {
+        let fallback_sorter = gtk::CustomSorter::new(|a, b| {
             let a = a.downcast_ref::<gio::FileInfo>().unwrap();
             let b = b.downcast_ref::<gio::FileInfo>().unwrap();
-            let a_is_dir = a.file_type() == gio::FileType::Directory;
-            let b_is_dir = b.file_type() == gio::FileType::Directory;
-
-            if a_is_dir && !b_is_dir {
-                gtk::Ordering::Smaller
-            } else if !a_is_dir && b_is_dir {
-                gtk::Ordering::Larger
-            } else {
-                gtk::Ordering::Equal
-            }
+            a.display_name().to_lowercase().cmp(&b.display_name().to_lowercase()).into()
         });
-
-        let multi_sorter = gtk::MultiSorter::new();
-        multi_sorter.append(folders_sorter);
-        multi_sorter.append(base_sorter);
-        multi_sorter.upcast()
-    } else {
-        base_sorter
+        multi_sorter.append(fallback_sorter);
     }
+
+    multi_sorter.upcast()
 }
