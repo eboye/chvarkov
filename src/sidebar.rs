@@ -25,7 +25,6 @@ impl Sidebar {
         // Title Area - will be synced with main HeaderBar height via SizeGroup in main.rs
         let title_header = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
-            .margin_start(16)
             .css_classes(["sidebar-title-area"])
             .build();
 
@@ -33,6 +32,7 @@ impl Sidebar {
             .label("Arch-Finder")
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Center)
+            .margin_start(16) // Margin inside the header to prevent stretching the box
             .css_classes(["title-4"])
             .build();
         

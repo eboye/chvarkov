@@ -84,6 +84,9 @@ fn setup_styles() {
 
         .sidebar-title-area {
             border-bottom: 1px solid alpha(@borders, 0.3);
+            box-sizing: border-box;
+            padding: 0;
+            margin: 0;
         }
 
         /* Sidebar active highlighting */
