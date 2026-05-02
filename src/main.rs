@@ -111,11 +111,11 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.properties", &["<Alt>Return"]);
 
     let show_hidden_action = gio::SimpleAction::new_stateful("show-hidden", None, &false.to_variant());
-    let app_weak = app.downgrade();
+    let app_weak_h = app.downgrade();
     show_hidden_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
             action.set_state(state);
-            if let Some(app) = app_weak.upgrade() {
+            if let Some(app) = app_weak_h.upgrade() {
                 app.activate();
             }
         }
@@ -249,7 +249,6 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&content));
         window.present();
 
-        // Grab focus on the first column's list view AFTER window presentation
         if let Some(lv) = first_list_view {
             lv.grab_focus();
         }
@@ -263,11 +262,17 @@ fn build_ui(app: &Application) {
 }
 
 #[derive(Clone)]
+struct ColumnEntry {
+    container: gtk::Widget,
+    focus_target: gtk::Widget, // The ListView or the Preview container
+}
+
+#[derive(Clone)]
 struct ColumnManager {
     columns_box: Box,
     show_hidden: bool,
     show_meta: bool,
-    widgets: Rc<RefCell<Vec<gtk::Widget>>>,
+    entries: Rc<RefCell<Vec<ColumnEntry>>>,
 }
 
 impl ColumnManager {
@@ -276,7 +281,7 @@ impl ColumnManager {
             columns_box,
             show_hidden,
             show_meta,
-            widgets: Rc::new(RefCell::new(Vec::new())),
+            entries: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -286,44 +291,70 @@ impl ColumnManager {
         let list_view = column.list_view.clone();
         
         {
-            let mut widgets = self.widgets.borrow_mut();
+            let mut entries = self.entries.borrow_mut();
             
-            // Clear all widgets at or after this index
-            while widgets.len() > index {
-                let widget = widgets.pop().unwrap();
-                self.columns_box.remove(&widget);
+            while entries.len() > index {
+                let entry = entries.pop().unwrap();
+                self.columns_box.remove(&entry.container);
             }
 
             self.columns_box.append(&column_widget);
-            widgets.push(column_widget);
+            entries.push(ColumnEntry {
+                container: column_widget.clone(),
+                focus_target: list_view.clone().upcast::<gtk::Widget>(),
+            });
         }
 
         let self_clone = self.clone();
+        let path_clone = path.clone();
         column.selection_model.connect_selection_changed(move |selection_model, _, _| {
             let selected_item = selection_model.selected_item();
             if let Some(item) = selected_item {
                 let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
                 let name = file_info.name();
-                let mut new_path = path.clone();
+                let mut new_path = path_clone.clone();
                 new_path.push(name);
 
                 if file_info.file_type() == gio::FileType::Directory {
                     self_clone.add_column(new_path, index + 1);
                 } else {
-                    // Show file preview
-                    let mut widgets = self_clone.widgets.borrow_mut();
-                    while widgets.len() > index + 1 {
-                        let widget = widgets.pop().unwrap();
-                        self_clone.columns_box.remove(&widget);
+                    let mut entries = self_clone.entries.borrow_mut();
+                    while entries.len() > index + 1 {
+                        let entry = entries.pop().unwrap();
+                        self_clone.columns_box.remove(&entry.container);
                     }
 
                     let preview = Preview::new(file_info, &new_path);
                     let preview_widget = preview.widget.upcast::<gtk::Widget>();
                     self_clone.columns_box.append(&preview_widget);
-                    widgets.push(preview_widget);
+                    entries.push(ColumnEntry {
+                        container: preview_widget.clone(),
+                        focus_target: preview_widget,
+                    });
                 }
             }
         });
+
+        // Add Key Navigation
+        let key_controller = gtk::EventControllerKey::new();
+        let self_key_clone = self.clone();
+        key_controller.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::Right {
+                let entries = self_key_clone.entries.borrow();
+                if index + 1 < entries.len() {
+                    entries[index + 1].focus_target.grab_focus();
+                    return glib::Propagation::Stop;
+                }
+            } else if key == gtk::gdk::Key::Left {
+                if index > 0 {
+                    let entries = self_key_clone.entries.borrow();
+                    entries[index - 1].focus_target.grab_focus();
+                    return glib::Propagation::Stop;
+                }
+            }
+            glib::Propagation::Proceed
+        });
+        list_view.add_controller(key_controller);
 
         Some(list_view)
     }
