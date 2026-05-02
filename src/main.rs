@@ -155,6 +155,10 @@ fn setup_actions(app: &Application) {
     app.add_action(&properties_action);
     app.set_accels_for_action("app.properties", &["<Alt>Return"]);
 
+    let preview_action = gio::SimpleAction::new("preview", None);
+    app.add_action(&preview_action);
+    app.set_accels_for_action("app.preview", &["space"]);
+
     let show_hidden_action = gio::SimpleAction::new_stateful("show-hidden", None, &false.to_variant());
     let app_weak_h = app.downgrade();
     show_hidden_action.connect_change_state(move |action, state| {
@@ -289,6 +293,17 @@ fn build_ui(app: &Application) {
             .unwrap_or(false);
 
         let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
+        
+        // Connect the preview action
+        let preview_action = app.lookup_action("preview").unwrap().downcast::<gio::SimpleAction>().unwrap();
+        let manager_preview_clone = manager.clone();
+        let window_preview_clone = window.clone();
+        preview_action.connect_activate(move |_, _| {
+            if let Some(selection) = manager_preview_clone.current_selection.borrow().as_ref() {
+                show_preview_popup(&window_preview_clone, selection);
+            }
+        });
+
         let first_list_view = manager.add_column(glib::home_dir(), 0);
 
         window.set_content(Some(&content));
@@ -307,6 +322,35 @@ fn build_ui(app: &Application) {
     }
 }
 
+fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
+    let preview_layout = Preview::create_preview_layout(&selection.file_info, true);
+    
+    let popup = adw::Window::builder()
+        .transient_for(parent)
+        .default_width(400)
+        .default_height(500)
+        .modal(true)
+        .content(&preview_layout)
+        .build();
+    
+    // Close on any key press
+    let key_controller = gtk::EventControllerKey::new();
+    let popup_clone = popup.clone();
+    key_controller.connect_key_pressed(move |_, _, _, _| {
+        popup_clone.close();
+        glib::Propagation::Stop
+    });
+    popup.add_controller(key_controller);
+
+    popup.present();
+}
+
+#[derive(Clone)]
+struct SelectionInfo {
+    file_info: gio::FileInfo,
+    path: PathBuf,
+}
+
 #[derive(Clone)]
 struct ColumnEntry {
     container: gtk::Widget,
@@ -319,6 +363,7 @@ struct ColumnManager {
     show_hidden: bool,
     show_meta: bool,
     entries: Rc<RefCell<Vec<ColumnEntry>>>,
+    current_selection: Rc<RefCell<Option<SelectionInfo>>>,
 }
 
 impl ColumnManager {
@@ -328,6 +373,7 @@ impl ColumnManager {
             show_hidden,
             show_meta,
             entries: Rc::new(RefCell::new(Vec::new())),
+            current_selection: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -360,6 +406,12 @@ impl ColumnManager {
                 let name = file_info.name();
                 let mut new_path = path_clone.clone();
                 new_path.push(name);
+
+                // Update current selection for Space preview
+                *self_clone.current_selection.borrow_mut() = Some(SelectionInfo {
+                    file_info: file_info.clone(),
+                    path: new_path.clone(),
+                });
 
                 if file_info.file_type() == gio::FileType::Directory {
                     self_clone.add_column(new_path, index + 1);
