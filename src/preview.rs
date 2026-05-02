@@ -72,14 +72,12 @@ impl Preview {
         let is_text = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "text/*")).unwrap_or(false);
 
         if is_image && large {
-            // High-quality large image preview for Sushi mode
             let picture = gtk::Picture::for_filename(path);
             picture.set_content_fit(gtk::ContentFit::Contain);
             picture.set_hexpand(true);
             picture.set_vexpand(true);
             container.append(&picture);
         } else if is_text && large {
-            // Syntax highlighted code preview
             let buffer = sourceview::Buffer::new(None);
             let view = sourceview::View::with_buffer(&buffer);
             view.set_editable(false);
@@ -88,14 +86,12 @@ impl Preview {
             view.set_monospace(true);
             view.set_show_line_numbers(true);
 
-            // Set language
             let lang_manager = sourceview::LanguageManager::default();
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let lang = lang_manager.guess_language(Some(filename), content_type.as_deref());
             buffer.set_language(lang.as_ref());
 
-            // Load first few KB
-            if let Ok(mut file) = std::fs::File::open(path) {
+            if let Ok(file) = std::fs::File::open(path) {
                 use std::io::Read;
                 let mut content = Vec::new();
                 file.take(10000).read_to_end(&mut content).ok(); // Read first 10KB
@@ -110,7 +106,6 @@ impl Preview {
                 .build();
             container.append(&scrolled);
         } else {
-            // Fallback: Large Icon + Metadata
             let image = gtk::Image::builder()
                 .pixel_size(if large { 256 } else { 128 })
                 .halign(gtk::Align::Center)
@@ -122,7 +117,6 @@ impl Preview {
             container.append(&image);
         }
 
-        // Filename
         let name_label = gtk::Label::builder()
             .label(file_info.display_name().as_str())
             .css_classes([if large { "title-1" } else { "title-2" }])
@@ -131,7 +125,6 @@ impl Preview {
             .build();
         container.append(&name_label);
 
-        // Info Grid
         let grid = gtk::Grid::builder()
             .column_spacing(12)
             .row_spacing(8)

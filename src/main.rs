@@ -14,6 +14,11 @@ use sidebar::Sidebar;
 use std::rc::Rc;
 use std::cell::RefCell;
 
+// Use a thread-local for the active manager to avoid unsafe set_data and NonNull issues
+thread_local! {
+    static ACTIVE_MANAGER: RefCell<Option<Rc<ColumnManager>>> = const { RefCell::new(None) };
+}
+
 fn main() {
     let application = Application::builder()
         .application_id("com.example.ArchFinder")
@@ -162,6 +167,19 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.properties", &["<Alt>Return"]);
 
     let preview_action = gio::SimpleAction::new("preview", None);
+    let app_weak_p = app.downgrade();
+    preview_action.connect_activate(move |_, _| {
+        if let Some(app) = app_weak_p.upgrade() {
+            ACTIVE_MANAGER.with(|m| {
+                if let Some(manager) = m.borrow().as_ref() {
+                    if let Some(window) = app.active_window() {
+                        let win = window.downcast::<ApplicationWindow>().unwrap();
+                        manager.toggle_preview(&win);
+                    }
+                }
+            });
+        }
+    });
     app.add_action(&preview_action);
     app.set_accels_for_action("app.preview", &["space"]);
 
@@ -374,14 +392,8 @@ fn build_ui(app: &Application) {
 
     scrolled_window.set_child(Some(&columns_box));
 
-    let manager = ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level);
-    
-    let preview_action = app.lookup_action("preview").unwrap().downcast::<gio::SimpleAction>().unwrap();
-    let manager_preview_clone = manager.clone();
-    let window_preview_clone = window.clone();
-    preview_action.connect_activate(move |_, _| {
-        manager_preview_clone.toggle_preview(&window_preview_clone);
-    });
+    let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level));
+    ACTIVE_MANAGER.with(|m| *m.borrow_mut() = Some(manager.clone()));
 
     if show_sidebar {
         let sidebar = Sidebar::new();
@@ -419,28 +431,6 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&root_layout));
         window.present();
     }
-}
-
-fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
-    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-    
-    let popup = adw::Window::builder()
-        .transient_for(parent)
-        .default_width(800)
-        .default_height(600)
-        .modal(true)
-        .content(&preview_layout)
-        .build();
-    
-    let key_controller = gtk::EventControllerKey::new();
-    let popup_clone = popup.clone();
-    key_controller.connect_key_pressed(move |_, _, _, _| {
-        popup_clone.close();
-        glib::Propagation::Stop
-    });
-    popup.add_controller(key_controller);
-
-    popup.present();
 }
 
 #[derive(Clone)]
@@ -641,9 +631,16 @@ impl ColumnManager {
                 if index > 0 {
                     let entries = self_key_clone.entries.borrow();
                     list_view_focus.remove_css_class("focused-column");
-                    let target = &entries[index - 1].focus_target;
+                    let target_entry = &entries[index - 1];
+                    let target = &target_entry.focus_target;
                     target.add_css_class("focused-column");
                     target.grab_focus();
+
+                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
+                        let sel = lv.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
+                        self_key_clone.handle_selection_change(&sel, &target_entry.path, index - 1);
+                    }
+                    
                     return glib::Propagation::Stop;
                 }
             }
