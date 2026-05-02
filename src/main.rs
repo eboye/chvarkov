@@ -78,6 +78,16 @@ fn setup_styles() {
         .navigation-sidebar {
             background-color: @window_bg_color;
         }
+
+        /* Sidebar active highlighting */
+        row.sidebar-active {
+            background-color: alpha(@accent_bg_color, 0.1);
+            color: @accent_fg_color;
+            font-weight: bold;
+        }
+        row.sidebar-active image {
+            color: @accent_bg_color;
+        }
     ");
 
     gtk::style_context_add_provider_for_display(
@@ -446,6 +456,7 @@ fn build_ui(app: &Application) {
     sort_menu.append(Some("Sort by Name"), Some("app.sort-type::name"));
     sort_menu.append(Some("Sort by Date"), Some("app.sort-type::date"));
     sort_menu.append(Some("Sort by Size"), Some("app.sort-type::size"));
+    sort_menu.append(Some("Sort by Type"), Some("app.sort-type::type"));
 
     let sort_type_btn = gtk::MenuButton::builder()
         .icon_name("view-sort-ascending-symbolic")
@@ -514,44 +525,65 @@ fn build_ui(app: &Application) {
     let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level, sort_type));
     ACTIVE_MANAGER.with(|m| *m.borrow_mut() = Some(manager.clone()));
 
-    if show_sidebar {
-        let sidebar = Sidebar::new();
-        root_layout.append(&sidebar.widget);
-        
-        let manager_sidebar_clone = manager.clone();
-        sidebar.list_box.connect_row_activated(move |_, list_row| {
-            let path_string = list_row.widget_name();
-            let path = PathBuf::from(path_string.as_str());
-            let settings = gio::Settings::new("com.example.ArchFinder");
-            let _ = settings.set_string("current-path", &path.to_string_lossy());
-
-            let manager_clone = manager_sidebar_clone.clone();
-            glib::idle_add_local(move || {
-                let path = path.clone();
-                manager_clone.add_column(path, 0);
-                // Also trigger an app-level refresh if in Icons mode
-                let settings = gio::Settings::new("com.example.ArchFinder");
-                let view_type: String = settings.get("view-type");
-                if view_type == "icons" {
-                    if let Some(app) = gio::Application::default() {
-                        app.activate();
-                    }
-                }
-                glib::ControlFlow::Break
-            });
-        });
-
-        let sep = gtk::Separator::new(Orientation::Vertical);
-        root_layout.append(&sep);
-    }
-
     let settings = gio::Settings::new("com.example.ArchFinder");
     let current_path_str: String = settings.get("current-path");
     let initial_path = if current_path_str.is_empty() {
         glib::home_dir()
     } else {
-        PathBuf::from(current_path_str)
+        PathBuf::from(&current_path_str)
     };
+
+    if show_sidebar {
+        let sidebar = Sidebar::new();
+        root_layout.append(&sidebar.widget);
+        
+        let manager_sidebar_clone = manager.clone();
+        sidebar.list_box.connect_row_activated(move |list_box, list_row| {
+            let path_string = list_row.widget_name();
+            let path = PathBuf::from(path_string.as_str());
+            let settings = gio::Settings::new("com.example.ArchFinder");
+            let _ = settings.set_string("current-path", &path.to_string_lossy());
+
+            // Update highlighting
+            let mut current = list_box.first_child();
+            while let Some(child) = current {
+                child.remove_css_class("sidebar-active");
+                current = child.next_sibling();
+            }
+            list_row.add_css_class("sidebar-active");
+
+            let view_type: String = settings.get("view-type");
+            if view_type == "icons" {
+                if let Some(app) = gio::Application::default() {
+                    glib::idle_add_local(move || {
+                        app.activate();
+                        glib::ControlFlow::Break
+                    });
+                }
+            } else {
+                let manager_clone = manager_sidebar_clone.clone();
+                glib::idle_add_local(move || {
+                    let path = path.clone();
+                    manager_clone.add_column(path, 0);
+                    glib::ControlFlow::Break
+                });
+            }
+        });
+
+        // Initial highlight
+        let current_path_norm = initial_path.to_string_lossy().to_string();
+        let mut current = sidebar.list_box.first_child();
+        while let Some(child) = current {
+            if child.widget_name() == current_path_norm {
+                child.add_css_class("sidebar-active");
+                break;
+            }
+            current = child.next_sibling();
+        }
+
+        let sep = gtk::Separator::new(Orientation::Vertical);
+        root_layout.append(&sep);
+    }
 
     if view_type == "miller" {
         main_content.append(&manager.scrolled_window);
@@ -601,28 +633,6 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&root_layout));
         window.present();
     }
-}
-
-fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
-    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-    
-    let popup = adw::Window::builder()
-        .transient_for(parent)
-        .default_width(800)
-        .default_height(600)
-        .modal(true)
-        .content(&preview_layout)
-        .build();
-    
-    let key_controller = gtk::EventControllerKey::new();
-    let popup_clone = popup.clone();
-    key_controller.connect_key_pressed(move |_, _, _, _| {
-        popup_clone.close();
-        glib::Propagation::Stop
-    });
-    popup.add_controller(key_controller);
-
-    popup.present();
 }
 
 #[derive(Clone)]

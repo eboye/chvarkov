@@ -34,7 +34,7 @@
     <key name="sort-type" type="s">
       <default>'name'</default>
       <summary>Sort type</summary>
-      <description>The method used to sort files (name, date, size).</description>
+      <description>The method used to sort files (name, date, size, type).</description>
     </key>
   </schema>
 </schemalist>

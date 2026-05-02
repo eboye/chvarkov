@@ -75,6 +75,16 @@ pub fn create_sorter(sort_type: &str) -> gtk::Sorter {
             });
             sorter.upcast()
         },
+        "type" => {
+            let sorter = gtk::CustomSorter::new(|a, b| {
+                let a = a.downcast_ref::<gio::FileInfo>().unwrap();
+                let b = b.downcast_ref::<gio::FileInfo>().unwrap();
+                let a_type = a.content_type().unwrap_or_else(|| "".into());
+                let b_type = b.content_type().unwrap_or_else(|| "".into());
+                a_type.cmp(&b_type).into()
+            });
+            sorter.upcast()
+        },
         _ => {
             // Use CustomSorter for name to avoid PropertyExpression crash (display-name is not a GObject property)
             let sorter = gtk::CustomSorter::new(|a, b| {
