@@ -457,20 +457,48 @@ fn show_preferences_window(app: &Application) {
     page.add(&group);
 
     // Default Path
-    let default_path_entry = gtk::Entry::builder()
-        .text(settings.string("default-path"))
+    let path_str = settings.string("default-path");
+    let display_path = if path_str.is_empty() { "Not set (Home)".to_string() } else { path_str.to_string() };
+
+    let path_label = gtk::Label::builder()
+        .label(display_path)
         .valign(gtk::Align::Center)
-        .hexpand(true)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .max_width_chars(30)
+        .css_classes(["dim-label"])
         .build();
-    
+
+    let pick_button = gtk::Button::builder()
+        .icon_name("folder-open-symbolic")
+        .valign(gtk::Align::Center)
+        .build();
+
     let default_path_row = adw::ActionRow::builder()
         .title("Default Startup Path")
         .build();
-    default_path_row.add_suffix(&default_path_entry);
+    default_path_row.add_suffix(&path_label);
+    default_path_row.add_suffix(&pick_button);
     
     let settings_path = settings.clone();
-    default_path_entry.connect_activate(move |entry| {
-        let _ = settings_path.set_string("default-path", &entry.text());
+    let pref_window_weak = pref_window.downgrade();
+    pick_button.connect_clicked(move |_| {
+        if let Some(pref_window) = pref_window_weak.upgrade() {
+            let dialog = gtk::FileDialog::builder()
+                .title("Select Default Startup Directory")
+                .build();
+            
+            let settings_c = settings_path.clone();
+            let label_c = path_label.clone();
+            dialog.select_folder(Some(&pref_window), gio::Cancellable::NONE, move |res| {
+                if let Ok(folder) = res {
+                    if let Some(path) = folder.path() {
+                        let path_str = path.to_string_lossy().to_string();
+                        let _ = settings_c.set_string("default-path", &path_str);
+                        label_c.set_label(&path_str);
+                    }
+                }
+            });
+        }
     });
     group.add(&default_path_row);
 
