@@ -48,10 +48,46 @@ pub fn get_directory_list(path: &std::path::Path) -> gtk::DirectoryList {
         .build()
 }
 
+pub fn format_size(size: i64) -> String {
+    if size < 1024 {
+        format!("{} B", size)
+    } else if size < 1024 * 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else if size < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+pub fn format_metadata(info: &gio::FileInfo) -> String {
+    let date = info.modification_date_time()
+        .and_then(|dt| dt.format("%Y-%m-%d").ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "----".to_string());
+
+    let is_dir = info.file_type() == gio::FileType::Directory;
+    
+    if is_dir {
+        let count = info.attribute_uint32("standard::n-children");
+        if count > 0 {
+            format!("{} | Folder ({} items)", date, count)
+        } else {
+            format!("{} | Folder", date)
+        }
+    } else {
+        let type_desc = info.content_type()
+            .map(|ct| gio::content_type_get_description(&ct).to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
+        
+        let size = format_size(info.size());
+        format!("{} | {} | {}", date, type_desc, size)
+    }
+}
+
 pub fn create_sorter(sort_type: &str, folders_first: bool) -> gtk::Sorter {
     let multi_sorter = gtk::MultiSorter::new();
 
-    // 1. Folders First (Primary if enabled)
     if folders_first {
         let folders_sorter = gtk::CustomSorter::new(|a, b| {
             let a = a.downcast_ref::<gio::FileInfo>().unwrap();
@@ -70,7 +106,6 @@ pub fn create_sorter(sort_type: &str, folders_first: bool) -> gtk::Sorter {
         multi_sorter.append(folders_sorter);
     }
 
-    // 2. User-Selected Sorter
     let primary_sorter: gtk::Sorter = match sort_type {
         "date" => {
             let sorter = gtk::CustomSorter::new(|a, b| {
@@ -118,7 +153,6 @@ pub fn create_sorter(sort_type: &str, folders_first: bool) -> gtk::Sorter {
     };
     multi_sorter.append(primary_sorter);
 
-    // 3. Fallback Name Sorter (Ensures deterministic sort for identical values)
     if sort_type != "name" && !sort_type.is_empty() {
         let fallback_sorter = gtk::CustomSorter::new(|a, b| {
             let a = a.downcast_ref::<gio::FileInfo>().unwrap();

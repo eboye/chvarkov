@@ -140,11 +140,7 @@ impl IconView {
 
             if show_meta {
                 if let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
-                    if let Some(date_time) = file_info.modification_date_time() {
-                        if let Ok(formatted) = date_time.format("%Y-%m-%d") {
-                            meta_label.set_text(&formatted);
-                        }
-                    }
+                    meta_label.set_text(&utils::format_metadata(&file_info));
                 }
             }
         });
