@@ -32,7 +32,7 @@ impl Sidebar {
         let title_label = gtk::Label::builder()
             .label("Arch-Finder")
             .halign(gtk::Align::Start)
-            .valign(gtk::Align::Center)
+            .valign(gtk::Align::Center) // Strictly center
             .margin_start(16)
             .margin_top(0)
             .margin_bottom(0)
@@ -101,7 +101,7 @@ impl Sidebar {
 
         container.append(&scrolled_window);
 
-        // Preferences Area - No margins, will be synced with breadcrumb bar height
+        // Preferences Area - Use a Box with valign Center for mathematical accuracy
         let pref_footer = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .css_classes(["sidebar-footer-area"])
@@ -114,12 +114,14 @@ impl Sidebar {
             .margin_end(12)
             .margin_top(0)
             .margin_bottom(0)
-            .valign(gtk::Align::Center)
+            .valign(gtk::Align::Center) // Centered in the 40px footer
             .build();
         
         let pref_content = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(12)
+            .margin_top(0)
+            .margin_bottom(0)
             .build();
         
         let pref_icon = gtk::Image::builder()
@@ -129,6 +131,7 @@ impl Sidebar {
         let pref_label = gtk::Label::builder()
             .label("Preferences")
             .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
             .css_classes(["sidebar-footer-label"])
             .build();
         

@@ -82,7 +82,7 @@ fn setup_styles() {
             border-right: 1px solid alpha(@borders, 0.3);
         }
 
-        /* Absolute Alignment Scrub */
+        /* Absolute Padding Removal for Alignment */
         .sidebar-title-area, headerbar, .headerbar {
             background: none;
             background-color: @window_bg_color;
@@ -91,6 +91,7 @@ fn setup_styles() {
             padding: 0 !important;
             margin: 0 !important;
             min-height: 46px; 
+            max-height: 46px;
         }
 
         .sidebar-title-label {
@@ -98,7 +99,6 @@ fn setup_styles() {
             font-weight: bold;
             margin: 0;
             padding: 0;
-            min-height: 46px; /* Match area height exactly */
         }
         
         .sidebar-footer-area, .breadcrumb-container-scrolled {
@@ -107,7 +107,8 @@ fn setup_styles() {
             box-sizing: border-box;
             padding: 0 !important;
             margin: 0 !important;
-            min-height: 36px; /* Tight bottom bar */
+            min-height: 40px;
+            max-height: 40px;
         }
 
         .sidebar-footer-label {
