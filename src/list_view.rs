@@ -76,7 +76,6 @@ impl ListView {
             let container = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
-                .focusable(true)
                 .build();
             
             let image = gtk::Image::new();
@@ -88,7 +87,7 @@ impl ListView {
             container.append(&image);
             container.append(&label);
             
-            // Context menu gesture
+            // Context menu gesture on the expander itself
             let gesture_right = gtk::GestureClick::builder()
                 .button(3)
                 .build();
@@ -104,10 +103,10 @@ impl ListView {
 
             // Keyboard Menu/Shift+F10
             let key_controller = gtk::EventControllerKey::new();
-            let container_clone = container.clone();
+            let expander_clone = expander.clone();
             key_controller.connect_key_pressed(move |_, key, _, modifier| {
                 if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
-                    let widget = container_clone.clone().upcast::<gtk::Widget>();
+                    let widget = expander_clone.clone().upcast::<gtk::Widget>();
                     let menu = utils::create_context_menu();
                     let popover = gtk::PopoverMenu::from_model(Some(&menu));
                     popover.set_parent(&widget);
@@ -120,8 +119,8 @@ impl ListView {
                 glib::Propagation::Proceed
             });
 
-            container.add_controller(gesture_right);
-            container.add_controller(key_controller);
+            expander.add_controller(gesture_right);
+            expander.add_controller(key_controller);
             
             expander.set_child(Some(&container));
             list_item.set_child(Some(&expander));
@@ -251,7 +250,7 @@ impl ListView {
             column_view.append_column(&size_col);
         }
 
-        // Context menu and activations
+        // activations
         column_view.connect_activate(move |_, _| {
             if let Some(app) = gio::Application::default() {
                 app.activate_action("open", None);

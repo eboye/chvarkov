@@ -83,7 +83,8 @@ fn setup_styles() {
         }
 
         /* Standardize Header and Footer backgrounds to match precisely */
-        .sidebar-title-area, headerbar {
+        .sidebar-title-area, headerbar, .headerbar {
+            background: none;
             background-color: @window_bg_color;
             border-bottom: 1px solid alpha(@borders, 0.3);
             box-sizing: border-box;
@@ -591,7 +592,7 @@ fn build_ui(app: &Application) {
         .build();
 
     let header_bar = HeaderBar::builder()
-        .title_widget(&adw::WindowTitle::new("", ""))
+        .title_widget(&gtk::Box::new(Orientation::Horizontal, 0))
         .build();
 
     let toggle_sidebar_btn = gtk::ToggleButton::builder()
@@ -1099,6 +1100,7 @@ impl ColumnManager {
         });
 
         let key_controller = gtk::EventControllerKey::new();
+        key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         let manager_key_clone = self.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             match key {
