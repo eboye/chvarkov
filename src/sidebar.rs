@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub struct Sidebar {
     pub widget: gtk::Box,
     pub list_box: gtk::ListBox,
+    pub title_header: gtk::Box,
 }
 
 struct SidebarItem {
@@ -21,10 +22,9 @@ impl Sidebar {
             .css_classes(["navigation-sidebar"])
             .build();
 
-        // Title Area - aligned with main HeaderBar
+        // Title Area - will be synced with main HeaderBar height via SizeGroup in main.rs
         let title_header = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
-            .height_request(46) // Matching typical AdwHeaderBar height
             .margin_start(16)
             .build();
 
@@ -32,7 +32,7 @@ impl Sidebar {
             .label("Arch-Finder")
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Center)
-            .css_classes(["title-4"]) // Using a smaller title class for better sidebar fit
+            .css_classes(["title-4"])
             .build();
         
         title_header.append(&title_label);
@@ -125,6 +125,7 @@ impl Sidebar {
         Self {
             widget: container,
             list_box,
+            title_header,
         }
     }
 }

@@ -813,6 +813,12 @@ fn build_ui(app: &Application) {
 
     if show_sidebar {
         let sidebar = Sidebar::new();
+        
+        // Sync Sidebar Title height with main HeaderBar exactly
+        let size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
+        size_group.add_widget(&header_bar);
+        size_group.add_widget(&sidebar.title_header);
+
         root_layout.append(&sidebar.widget);
         
         let manager_sidebar_clone = manager.clone();
