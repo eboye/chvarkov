@@ -82,7 +82,7 @@ fn setup_styles() {
             border-right: 1px solid alpha(@borders, 0.3);
         }
 
-        /* Standardize Header and Footer backgrounds to match precisely */
+        /* Strict match for AdwHeaderBar height and style */
         .sidebar-title-area, headerbar, .headerbar {
             background: none;
             background-color: @window_bg_color;
@@ -90,7 +90,7 @@ fn setup_styles() {
             box-sizing: border-box;
             padding: 0;
             margin: 0;
-            min-height: 46px; /* Strict matching for AdwHeaderBar height */
+            min-height: 46px; 
         }
         
         .sidebar-footer-area, .breadcrumb-container-scrolled {
@@ -99,7 +99,7 @@ fn setup_styles() {
             box-sizing: border-box;
             padding: 0;
             margin: 0;
-            min-height: 40px; /* Synchronized bottom height */
+            min-height: 40px;
         }
 
         /* Sidebar active highlighting */
@@ -581,7 +581,7 @@ fn build_ui(app: &Application) {
             .build()
     };
     
-    window.set_title(Some(""));
+    window.set_title(None);
 
     let root_layout = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -596,7 +596,7 @@ fn build_ui(app: &Application) {
         .build();
 
     let header_bar = HeaderBar::builder()
-        .title_widget(&gtk::Label::new(Some(" ")))
+        .title_widget(&gtk::Box::new(Orientation::Horizontal, 0))
         .build();
 
     let toggle_sidebar_btn = gtk::ToggleButton::builder()

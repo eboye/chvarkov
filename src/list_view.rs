@@ -76,7 +76,7 @@ impl ListView {
             let container = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
-                .focusable(true)
+                .focusable(true) // Ensure the content box is focusable to catch shortcuts
                 .build();
             
             let image = gtk::Image::new();
@@ -88,7 +88,7 @@ impl ListView {
             container.append(&image);
             container.append(&label);
             
-            // Context menu gesture on the expander itself
+            // Context menu gesture on the container
             let gesture_right = gtk::GestureClick::builder()
                 .button(3)
                 .build();
@@ -102,12 +102,12 @@ impl ListView {
                 popover.popup();
             });
 
-            // Keyboard Menu/Shift+F10
+            // Keyboard Menu/Shift+F10 on the container
             let key_controller = gtk::EventControllerKey::new();
-            let expander_clone = expander.clone();
+            let container_clone = container.clone();
             key_controller.connect_key_pressed(move |_, key, _, modifier| {
                 if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
-                    let widget = expander_clone.clone().upcast::<gtk::Widget>();
+                    let widget = container_clone.clone().upcast::<gtk::Widget>();
                     let menu = utils::create_context_menu();
                     let popover = gtk::PopoverMenu::from_model(Some(&menu));
                     popover.set_parent(&widget);
@@ -120,8 +120,8 @@ impl ListView {
                 glib::Propagation::Proceed
             });
 
-            expander.add_controller(gesture_right);
-            expander.add_controller(key_controller);
+            container.add_controller(gesture_right);
+            container.add_controller(key_controller);
             
             expander.set_child(Some(&container));
             list_item.set_child(Some(&expander));
