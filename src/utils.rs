@@ -41,7 +41,7 @@ pub fn create_context_menu() -> gio::Menu {
 pub fn get_directory_list(path: &std::path::Path) -> gtk::DirectoryList {
     let file = gio::File::for_path(path);
     gtk::DirectoryList::builder()
-        .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,standard::is-symlink-target-directory")
+        .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,standard::is-symlink-target-directory,standard::n-children")
         .file(&file)
         .monitored(true)
         .io_priority(glib::Priority::DEFAULT)
