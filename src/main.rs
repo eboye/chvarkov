@@ -88,6 +88,13 @@ fn setup_styles() {
             padding: 0;
             margin: 0;
         }
+        
+        .sidebar-footer-area {
+            border-top: 1px solid alpha(@borders, 0.3);
+            box-sizing: border-box;
+            padding: 0;
+            margin: 0;
+        }
 
         /* Sidebar active highlighting */
         row.sidebar-active {
@@ -102,8 +109,13 @@ fn setup_styles() {
 
         .breadcrumb-bar {
             background-color: @window_bg_color;
-            border-top: 1px solid alpha(@borders, 0.3);
         }
+        
+        .breadcrumb-container-scrolled {
+            border-top: 1px solid alpha(@borders, 0.3);
+            box-sizing: border-box;
+        }
+
         .breadcrumb-bar button {
             padding: 4px 8px;
             font-size: 0.9rem;
@@ -805,6 +817,7 @@ fn build_ui(app: &Application) {
         .vscrollbar_policy(gtk::PolicyType::Never)
         .child(&breadcrumb_bar)
         .visible(false)
+        .css_classes(["breadcrumb-container-scrolled"])
         .build();
     
     manager.set_breadcrumb_container(breadcrumb_bar.clone(), breadcrumb_scrolled.clone());
@@ -826,6 +839,11 @@ fn build_ui(app: &Application) {
         let size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
         size_group.add_widget(&header_bar);
         size_group.add_widget(&sidebar.title_header);
+
+        // Sync Sidebar Footer height with Breadcrumb Bar exactly
+        let footer_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
+        footer_size_group.add_widget(&breadcrumb_scrolled);
+        footer_size_group.add_widget(&sidebar.pref_footer);
 
         root_layout.append(&sidebar.widget);
         

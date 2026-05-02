@@ -6,6 +6,7 @@ pub struct Sidebar {
     pub widget: gtk::Box,
     pub list_box: gtk::ListBox,
     pub title_header: gtk::Box,
+    pub pref_footer: gtk::Box,
 }
 
 struct SidebarItem {
@@ -32,7 +33,7 @@ impl Sidebar {
             .label("Arch-Finder")
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Center)
-            .margin_start(16) // Margin inside the header to prevent stretching the box
+            .margin_start(16)
             .css_classes(["title-4"])
             .build();
         
@@ -98,14 +99,18 @@ impl Sidebar {
 
         container.append(&scrolled_window);
 
-        // Preferences Button at bottom
+        // Preferences Area - will be synced with breadcrumb bar height
+        let pref_footer = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .css_classes(["sidebar-footer-area"])
+            .build();
+
         let pref_btn = gtk::Button::builder()
             .action_name("app.preferences")
             .has_frame(false)
             .margin_start(12)
             .margin_end(12)
-            .margin_top(12)
-            .margin_bottom(12)
+            .valign(gtk::Align::Center)
             .build();
         
         let pref_content = gtk::Box::builder()
@@ -126,12 +131,14 @@ impl Sidebar {
         pref_content.append(&pref_label);
         pref_btn.set_child(Some(&pref_content));
 
-        container.append(&pref_btn);
+        pref_footer.append(&pref_btn);
+        container.append(&pref_footer);
 
         Self {
             widget: container,
             list_box,
             title_header,
+            pref_footer,
         }
     }
 }
