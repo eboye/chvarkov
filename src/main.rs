@@ -7,7 +7,7 @@ mod utils;
 
 use libadwaita as adw;
 use adw::prelude::*;
-use adw::{Application, ApplicationWindow, HeaderBar};
+use adw::{Application, ApplicationWindow, HeaderBar, OverlaySplitView};
 use gtk4 as gtk;
 use gtk::{Box, Orientation, ScrolledWindow};
 use std::path::PathBuf;
@@ -79,7 +79,6 @@ fn setup_styles() {
         
         .navigation-sidebar {
             background-color: @window_bg_color;
-            border-right: 1px solid alpha(@borders, 0.3);
         }
 
         /* Absolute Padding Removal for Alignment */
@@ -99,6 +98,7 @@ fn setup_styles() {
             font-weight: bold;
             margin: 0;
             padding: 0;
+            min-height: 46px; /* Match area height exactly */
         }
         
         .sidebar-footer-area, .breadcrumb-container-scrolled {
@@ -371,10 +371,10 @@ fn setup_actions(app: &Application) {
             action.set_state(&state);
             let _ = settings_s.set_value("show-sidebar", &state);
             if let Some(app) = app_weak_s.upgrade() {
-                glib::idle_add_local(move || {
-                    app.activate();
-                    glib::ControlFlow::Break
-                });
+                 if let Some(window) = app.active_window().and_then(|w| w.downcast::<ApplicationWindow>().ok()) {
+                     let split_view = window.child().and_downcast::<OverlaySplitView>().unwrap();
+                     split_view.set_show_sidebar(state.get::<bool>().unwrap());
+                 }
             }
         }
     });
@@ -608,11 +608,20 @@ fn build_ui(app: &Application) {
     
     window.set_title(None);
 
-    let root_layout = Box::builder()
-        .orientation(Orientation::Horizontal)
+    let split_view = OverlaySplitView::builder()
         .hexpand(true)
         .vexpand(true)
         .build();
+
+    // Responsive Breakpoint for Mobile/Narrow widths
+    let breakpoint = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
+        adw::BreakpointConditionLengthType::MaxWidth,
+        600.0,
+        adw::LengthUnit::Px,
+    ));
+    
+    breakpoint.add_setter(&split_view, "collapsed", Some(&true.to_value()));
+    window.add_breakpoint(breakpoint);
 
     let main_content = Box::builder()
         .orientation(Orientation::Vertical)
@@ -630,6 +639,12 @@ fn build_ui(app: &Application) {
         .action_name("app.toggle-sidebar")
         .build();
     header_bar.pack_start(&toggle_sidebar_btn);
+
+    // Sync toggle button state with split view
+    split_view.bind_property("show-sidebar", &toggle_sidebar_btn, "active")
+        .sync_create()
+        .bidirectional()
+        .build();
 
     let display_group = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -860,78 +875,78 @@ fn build_ui(app: &Application) {
         glib::home_dir()
     };
 
-    if show_sidebar {
-        let sidebar = Sidebar::new();
-        
-        // Sync Sidebar Title height with main HeaderBar exactly
-        let size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
-        size_group.add_widget(&header_bar);
-        size_group.add_widget(&sidebar.title_header);
+    let sidebar = Sidebar::new();
+    
+    // Sync Sidebar Title height with main HeaderBar exactly
+    let size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
+    size_group.add_widget(&header_bar);
+    size_group.add_widget(&sidebar.title_header);
 
-        // Sync Sidebar Footer height with Breadcrumb Bar exactly
-        let footer_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
-        footer_size_group.add_widget(&breadcrumb_scrolled);
-        footer_size_group.add_widget(&sidebar.pref_footer);
+    // Sync Sidebar Footer height with Breadcrumb Bar exactly
+    let footer_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
+    footer_size_group.add_widget(&breadcrumb_scrolled);
+    footer_size_group.add_widget(&sidebar.pref_footer);
 
-        root_layout.append(&sidebar.widget);
-        
-        let manager_sidebar_clone = manager.clone();
-        sidebar.list_box.connect_row_activated(move |list_box, list_row| {
-            let path_string = list_row.widget_name();
-            let path = PathBuf::from(path_string.as_str());
-            let settings = gio::Settings::new("com.example.ArchFinder");
-            let _ = settings.set_string("current-path", &path.to_string_lossy());
+    split_view.set_sidebar(Some(&sidebar.widget));
+    split_view.set_show_sidebar(show_sidebar);
+    
+    let manager_sidebar_clone = manager.clone();
+    let split_view_row_clone = split_view.clone();
+    sidebar.list_box.connect_row_activated(move |list_box, list_row| {
+        let path_string = list_row.widget_name();
+        let path = PathBuf::from(path_string.as_str());
+        let settings = gio::Settings::new("com.example.ArchFinder");
+        let _ = settings.set_string("current-path", &path.to_string_lossy());
 
-            // Update highlighting
-            let mut current = list_box.first_child();
-            while let Some(child) = current {
-                child.remove_css_class("sidebar-active");
-                current = child.next_sibling();
-            }
-            let list_row_clone = list_row.clone();
-            glib::idle_add_local(move || {
-                list_row_clone.add_css_class("sidebar-active");
-                glib::ControlFlow::Break
-            });
+        // Update highlighting
+        let mut current = list_box.first_child();
+        while let Some(child) = current {
+            child.remove_css_class("sidebar-active");
+            current = child.next_sibling();
+        }
+        let list_row_clone = list_row.clone();
+        glib::idle_add_local(move || {
+            list_row_clone.add_css_class("sidebar-active");
+            glib::ControlFlow::Break
+        });
 
-            let view_type: String = settings.get("view-type");
-            if view_type == "icons" || view_type == "list" {
-                if let Some(app) = gio::Application::default() {
-                    glib::idle_add_local(move || {
-                        app.activate();
-                        glib::ControlFlow::Break
-                    });
-                }
-            } else {
-                let manager_clone = manager_sidebar_clone.clone();
+        // Hide sidebar in collapsed/mobile mode after activation
+        if split_view_row_clone.is_collapsed() {
+            split_view_row_clone.set_show_sidebar(false);
+        }
+
+        let view_type: String = settings.get("view-type");
+        if view_type == "icons" || view_type == "list" {
+            if let Some(app) = gio::Application::default() {
                 glib::idle_add_local(move || {
-                    let path = path.clone();
-                    manager_clone.add_column(path, 0);
+                    app.activate();
                     glib::ControlFlow::Break
                 });
             }
-        });
-
-        // Initial highlight
-        let current_path_norm = initial_path.to_string_lossy().to_string();
-        let mut current = sidebar.list_box.first_child();
-        while let Some(child) = current {
-            if child.widget_name() == current_path_norm {
-                child.add_css_class("sidebar-active");
-                break;
-            }
-            current = child.next_sibling();
+        } else {
+            let manager_clone = manager_sidebar_clone.clone();
+            glib::idle_add_local(move || {
+                let path = path.clone();
+                manager_clone.add_column(path, 0);
+                glib::ControlFlow::Break
+            });
         }
+    });
+
+    // Initial highlight
+    let current_path_norm = initial_path.to_string_lossy().to_string();
+    let mut current = sidebar.list_box.first_child();
+    while let Some(child) = current {
+        if child.widget_name() == current_path_norm {
+            child.add_css_class("sidebar-active");
+            break;
+        }
+        current = child.next_sibling();
     }
 
     if view_type == "miller" {
         main_content.append(&manager.scrolled_window);
-        root_layout.append(&main_content);
-
         let first_list_view = manager.add_column(initial_path.clone(), 0);
-
-        window.set_content(Some(&root_layout));
-        window.present();
 
         if let Some(lv) = first_list_view {
             lv.add_css_class("focused-column");
@@ -948,10 +963,6 @@ fn build_ui(app: &Application) {
         });
 
         main_content.append(&icon_view.widget);
-        root_layout.append(&main_content);
-        window.set_content(Some(&root_layout));
-        window.present();
-        
         icon_view.grid_view.add_css_class("focused-grid");
         icon_view.grid_view.grab_focus();
         manager.set_main_view(icon_view.grid_view.clone().upcast::<gtk::Widget>());
@@ -966,10 +977,6 @@ fn build_ui(app: &Application) {
         });
 
         main_content.append(&list_view_widget.widget);
-        root_layout.append(&main_content);
-        window.set_content(Some(&root_layout));
-        window.present();
-        
         list_view_widget.column_view.add_css_class("focused-list");
         list_view_widget.column_view.grab_focus();
         manager.set_main_view(list_view_widget.column_view.clone().upcast::<gtk::Widget>());
@@ -977,12 +984,13 @@ fn build_ui(app: &Application) {
         let label = gtk::Label::new(Some(&format!("{} view is not yet implemented", view_type)));
         label.set_vexpand(true);
         main_content.append(&label);
-        root_layout.append(&main_content);
-        window.set_content(Some(&root_layout));
-        window.present();
     }
 
     main_content.append(&breadcrumb_scrolled);
+    split_view.set_content(Some(&main_content));
+    
+    window.set_content(Some(&split_view));
+    window.present();
 }
 
 #[derive(Clone)]
