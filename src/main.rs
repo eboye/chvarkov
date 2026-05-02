@@ -521,12 +521,19 @@ impl ColumnManager {
             adj.set_value(adj.upper() - adj.page_size());
             glib::ControlFlow::Break
         });
+let self_clone = self.clone();
+let path_clone = path.clone();
+let index_clone = index;
+column.selection_model.connect_selection_changed(move |selection_model, _, _| {
+    let self_idle = self_clone.clone();
+    let selection_idle = selection_model.clone();
+    let path_idle = path_clone.clone();
+    glib::idle_add_local(move || {
+        self_idle.handle_selection_change(&selection_idle, &path_idle, index_clone);
+        glib::ControlFlow::Break
+    });
+});
 
-        let self_clone = self.clone();
-        let path_clone = path.clone();
-        column.selection_model.connect_selection_changed(move |selection_model, _, _| {
-            self_clone.handle_selection_change(selection_model, &path_clone, index);
-        });
 
         let key_controller = gtk::EventControllerKey::new();
         let self_key_clone = self.clone();
