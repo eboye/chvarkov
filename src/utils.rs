@@ -48,8 +48,8 @@ pub fn get_directory_list(path: &std::path::Path) -> gtk::DirectoryList {
         .build()
 }
 
-pub fn create_sorter(sort_type: &str) -> gtk::Sorter {
-    match sort_type {
+pub fn create_sorter(sort_type: &str, folders_first: bool) -> gtk::Sorter {
+    let base_sorter: gtk::Sorter = match sort_type {
         "date" => {
             let sorter = gtk::CustomSorter::new(|a, b| {
                 let a = a.downcast_ref::<gio::FileInfo>().unwrap();
@@ -86,7 +86,6 @@ pub fn create_sorter(sort_type: &str) -> gtk::Sorter {
             sorter.upcast()
         },
         _ => {
-            // Use CustomSorter for name to avoid PropertyExpression crash (display-name is not a GObject property)
             let sorter = gtk::CustomSorter::new(|a, b| {
                 let a = a.downcast_ref::<gio::FileInfo>().unwrap();
                 let b = b.downcast_ref::<gio::FileInfo>().unwrap();
@@ -94,5 +93,29 @@ pub fn create_sorter(sort_type: &str) -> gtk::Sorter {
             });
             sorter.upcast()
         }
+    };
+
+    if folders_first {
+        let folders_sorter = gtk::CustomSorter::new(|a, b| {
+            let a = a.downcast_ref::<gio::FileInfo>().unwrap();
+            let b = b.downcast_ref::<gio::FileInfo>().unwrap();
+            let a_is_dir = a.file_type() == gio::FileType::Directory;
+            let b_is_dir = b.file_type() == gio::FileType::Directory;
+
+            if a_is_dir && !b_is_dir {
+                gtk::Ordering::Smaller
+            } else if !a_is_dir && b_is_dir {
+                gtk::Ordering::Larger
+            } else {
+                gtk::Ordering::Equal
+            }
+        });
+
+        let multi_sorter = gtk::MultiSorter::new();
+        multi_sorter.append(folders_sorter);
+        multi_sorter.append(base_sorter);
+        multi_sorter.upcast()
+    } else {
+        base_sorter
     }
 }

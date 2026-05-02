@@ -9,7 +9,7 @@ pub struct Column {
 }
 
 impl Column {
-    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, zoom_level: i32, sort_type: &str) -> Self {
+    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, zoom_level: i32, sort_type: &str, folders_first: bool) -> Self {
         let directory_list = utils::get_directory_list(path);
         
         let filter = gtk::CustomFilter::new(move |item| {
@@ -24,7 +24,7 @@ impl Column {
 
         let filter_model = gtk::FilterListModel::new(Some(directory_list), Some(filter));
         
-        let sorter = utils::create_sorter(sort_type);
+        let sorter = utils::create_sorter(sort_type, folders_first);
         let sort_model = gtk::SortListModel::new(Some(filter_model), Some(sorter));
         
         let selection_model = gtk::MultiSelection::new(Some(sort_model));

@@ -36,5 +36,15 @@
       <summary>Sort type</summary>
       <description>The method used to sort files (name, date, size, type).</description>
     </key>
+    <key name="default-path" type="s">
+      <default>''</default>
+      <summary>Default path</summary>
+      <description>The directory path to open on startup if no path is restored.</description>
+    </key>
+    <key name="folders-first" type="b">
+      <default>true</default>
+      <summary>Folders first</summary>
+      <description>Whether folders should be listed before files when sorting.</description>
+    </key>
   </schema>
 </schemalist>

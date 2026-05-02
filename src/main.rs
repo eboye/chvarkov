@@ -427,6 +427,75 @@ fn setup_actions(app: &Application) {
         }
     });
     app.add_action(&sort_type_action);
+
+    let preferences_action = gio::SimpleAction::new("preferences", None);
+    let app_weak_pref = app.downgrade();
+    preferences_action.connect_activate(move |_, _| {
+        if let Some(app) = app_weak_pref.upgrade() {
+            show_preferences_window(&app);
+        }
+    });
+    app.add_action(&preferences_action);
+    app.set_accels_for_action("app.preferences", &["<Control>comma"]);
+}
+
+fn show_preferences_window(app: &Application) {
+    let window = app.active_window().unwrap();
+    let settings = gio::Settings::new("com.example.ArchFinder");
+
+    let pref_window = adw::PreferencesWindow::builder()
+        .transient_for(&window)
+        .modal(true)
+        .build();
+
+    let page = adw::PreferencesPage::new();
+    pref_window.add(&page);
+
+    let group = adw::PreferencesGroup::builder()
+        .title("General")
+        .build();
+    page.add(&group);
+
+    // Default Path
+    let default_path_entry = gtk::Entry::builder()
+        .text(settings.string("default-path"))
+        .valign(gtk::Align::Center)
+        .hexpand(true)
+        .build();
+    
+    let default_path_row = adw::ActionRow::builder()
+        .title("Default Startup Path")
+        .build();
+    default_path_row.add_suffix(&default_path_entry);
+    
+    let settings_path = settings.clone();
+    default_path_entry.connect_activate(move |entry| {
+        let _ = settings_path.set_string("default-path", &entry.text());
+    });
+    group.add(&default_path_row);
+
+    // Folders First
+    let folders_first_switch = gtk::Switch::builder()
+        .active(settings.boolean("folders-first"))
+        .valign(gtk::Align::Center)
+        .build();
+    
+    let folders_first_row = adw::ActionRow::builder()
+        .title("List Folders First")
+        .activatable_widget(&folders_first_switch)
+        .build();
+    folders_first_row.add_suffix(&folders_first_switch);
+    
+    let settings_folders = settings.clone();
+    folders_first_switch.connect_active_notify(move |sw| {
+        let _ = settings_folders.set_boolean("folders-first", sw.is_active());
+        if let Some(app) = gio::Application::default() {
+            app.activate();
+        }
+    });
+    group.add(&folders_first_row);
+
+    pref_window.present();
 }
 
 fn build_ui(app: &Application) {
@@ -459,7 +528,7 @@ fn build_ui(app: &Application) {
     let toggle_sidebar_btn = gtk::ToggleButton::builder()
         .icon_name("sidebar-show-symbolic")
         .tooltip_text("Toggle Sidebar (F9)")
-        .action_name("app.show-sidebar")
+        .action_name("app.toggle-sidebar")
         .build();
     header_bar.pack_start(&toggle_sidebar_btn);
 
@@ -551,8 +620,16 @@ fn build_ui(app: &Application) {
 
     header_bar.pack_end(&zoom_group);
 
+    let preferences_btn = gtk::Button::builder()
+        .icon_name("emblem-system-symbolic")
+        .tooltip_text("Preferences")
+        .action_name("app.preferences")
+        .build();
+    header_bar.pack_end(&preferences_btn);
+
     main_content.append(&header_bar);
 
+    let settings = gio::Settings::new("com.example.ArchFinder");
     let show_sidebar = app.lookup_action("show-sidebar")
         .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
         .map(|a| a.state().unwrap().get::<bool>().unwrap())
@@ -572,6 +649,8 @@ fn build_ui(app: &Application) {
         .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
         .map(|a| a.state().unwrap().get::<i32>().unwrap())
         .unwrap_or(0);
+
+    let folders_first = settings.boolean("folders-first");
 
     let scrolled_window = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Automatic)
@@ -599,7 +678,7 @@ fn build_ui(app: &Application) {
     adj.connect_upper_notify(snap_to_right);
     adj.connect_page_size_notify(snap_to_right);
 
-    let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level, sort_type));
+    let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level, sort_type, folders_first));
     ACTIVE_MANAGER.with(|m| *m.borrow_mut() = Some(manager.clone()));
 
     // Breadcrumb Bar
@@ -620,12 +699,14 @@ fn build_ui(app: &Application) {
     
     manager.set_breadcrumb_container(breadcrumb_bar.clone());
 
-    let settings = gio::Settings::new("com.example.ArchFinder");
     let current_path_str: String = settings.get("current-path");
-    let initial_path = if current_path_str.is_empty() {
-        glib::home_dir()
-    } else {
+    let default_path_str: String = settings.get("default-path");
+    let initial_path = if !current_path_str.is_empty() {
         PathBuf::from(&current_path_str)
+    } else if !default_path_str.is_empty() {
+        PathBuf::from(&default_path_str)
+    } else {
+        glib::home_dir()
     };
 
     if show_sidebar {
@@ -684,7 +765,7 @@ fn build_ui(app: &Application) {
         main_content.append(&manager.scrolled_window);
         root_layout.append(&main_content);
 
-        let first_list_view = manager.add_column(glib::home_dir(), 0);
+        let first_list_view = manager.add_column(initial_path.clone(), 0);
 
         window.set_content(Some(&root_layout));
         window.present();
@@ -694,20 +775,10 @@ fn build_ui(app: &Application) {
             lv.grab_focus();
         }
     } else if view_type == "icons" {
-        let current_path = manager.current_selection.borrow().as_ref()
-            .map(|s| {
-                if s.path.is_dir() {
-                    s.path.clone()
-                } else {
-                    s.path.parent().unwrap_or(&s.path).to_path_buf()
-                }
-            })
-            .unwrap_or_else(|| initial_path.clone());
-            
-        let icon_view = IconView::new(&current_path, show_hidden, show_meta, zoom_level, &manager.sort_type);
+        let icon_view = IconView::new(&initial_path, show_hidden, show_meta, zoom_level, &manager.sort_type, folders_first);
         
         let manager_icon_clone = manager.clone();
-        let path_icon_clone = current_path.clone();
+        let path_icon_clone = initial_path.clone();
         icon_view.grid_view.model().unwrap().connect_selection_changed(move |selection_model, _, _| {
             let selection_model = selection_model.downcast_ref::<gtk::MultiSelection>().unwrap();
             manager_icon_clone.handle_selection_change_multi(selection_model, &path_icon_clone, 0);
@@ -754,13 +825,14 @@ struct ColumnManager {
     show_meta: bool,
     zoom_level: i32,
     sort_type: String,
+    folders_first: bool,
     entries: Rc<RefCell<Vec<ColumnEntry>>>,
     current_selection: Rc<RefCell<Option<SelectionInfo>>>,
     preview_window: Rc<RefCell<Option<adw::Window>>>,
 }
 
 impl ColumnManager {
-    fn new(columns_box: Box, scrolled_window: ScrolledWindow, show_hidden: bool, show_meta: bool, zoom_level: i32, sort_type: String) -> Self {
+    fn new(columns_box: Box, scrolled_window: ScrolledWindow, show_hidden: bool, show_meta: bool, zoom_level: i32, sort_type: String, folders_first: bool) -> Self {
         Self {
             columns_box,
             scrolled_window,
@@ -769,6 +841,7 @@ impl ColumnManager {
             show_meta,
             zoom_level,
             sort_type,
+            folders_first,
             entries: Rc::new(RefCell::new(Vec::new())),
             current_selection: Rc::new(RefCell::new(None)),
             preview_window: Rc::new(RefCell::new(None)),
@@ -917,7 +990,7 @@ impl ColumnManager {
             }
         }
 
-        let column = Column::new(&path, self.show_hidden, self.show_meta, self.zoom_level, &self.sort_type);
+        let column = Column::new(&path, self.show_hidden, self.show_meta, self.zoom_level, &self.sort_type, self.folders_first);
         let column_widget = column.widget.clone().upcast::<gtk::Widget>();
         let list_view = column.list_view.clone();
         
