@@ -1,6 +1,5 @@
 use gtk4 as gtk;
 use gtk::prelude::*;
-use std::path::PathBuf;
 
 pub struct IconView {
     pub widget: gtk::ScrolledWindow,
@@ -43,6 +42,8 @@ impl IconView {
             _ => 192,
         };
 
+        let item_width = icon_size + 40;
+
         factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
             let container = gtk::Box::builder()
@@ -52,7 +53,7 @@ impl IconView {
                 .margin_bottom(8)
                 .margin_start(4)
                 .margin_end(4)
-                .width_request(icon_size + 20)
+                .width_request(item_width)
                 .build();
 
             let image = gtk::Image::builder()
@@ -87,11 +88,15 @@ impl IconView {
             }
         });
 
+        // To make it adapt to window width, we use max_columns(0) which means "as many as fit"
+        // in newer GTK, or just rely on the ScrolledWindow + GridView default behavior.
+        // We set max_columns to a high number to allow wrapping.
         let grid_view = gtk::GridView::builder()
             .model(&selection_model)
             .factory(&factory)
-            .max_columns(10)
+            .max_columns(100) 
             .min_columns(1)
+            .enable_rubberband(true)
             .build();
 
         let scrolled_window = gtk::ScrolledWindow::builder()
