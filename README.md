@@ -13,6 +13,21 @@
 - **Metadata Toggle:** Quickly switch between a compact view and a detailed view showing "Last Modified" dates.
 - **Hidden Files Toggle:** Easily hide or show dotfiles with a single click.
 
+## ⌨️ Keyboard Shortcuts
+
+| Action | Shortcut |
+| :--- | :--- |
+| **Quit Application** | `Ctrl` + `Q` |
+| **Open File/Folder** | `Return` (Enter) |
+| **Copy** | `Ctrl` + `C` |
+| **Cut** | `Ctrl` + `X` |
+| **Paste** | `Ctrl` + `V` |
+| **Rename** | `F2` |
+| **Create Link** | `Ctrl` + `Shift` + `M` |
+| **Move to Trash** | `Delete` |
+| **View Properties** | `Alt` + `Return` |
+| **Trigger Context Menu** | `Menu` key or `Shift` + `F10` |
+
 ## 🚀 Getting Started
 
 ### Prerequisites
