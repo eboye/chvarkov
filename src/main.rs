@@ -92,6 +92,13 @@ fn setup_styles() {
             margin: 0 !important;
             min-height: 46px; 
         }
+
+        .sidebar-title-label {
+            font-size: 1.1rem;
+            font-weight: bold;
+            margin: 0;
+            padding: 0;
+        }
         
         .sidebar-footer-area, .breadcrumb-container-scrolled {
             background-color: @window_bg_color;
@@ -100,6 +107,12 @@ fn setup_styles() {
             padding: 0 !important;
             margin: 0 !important;
             min-height: 40px;
+        }
+
+        .sidebar-footer-label {
+            font-size: 0.95rem;
+            margin: 0;
+            padding: 0;
         }
 
         /* Sidebar active highlighting */

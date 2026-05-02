@@ -35,9 +35,7 @@ impl Sidebar {
             .halign(gtk::Align::Start)
             .valign(gtk::Align::Center)
             .margin_start(16)
-            .margin_top(0)
-            .margin_bottom(0)
-            .css_classes(["title-4"])
+            .css_classes(["sidebar-title-label"])
             .build();
         
         let attrs = gtk::pango::AttrList::new();
@@ -114,8 +112,6 @@ impl Sidebar {
             .has_frame(false)
             .margin_start(12)
             .margin_end(12)
-            .margin_top(0)
-            .margin_bottom(0)
             .valign(gtk::Align::Center)
             .build();
         
@@ -131,6 +127,7 @@ impl Sidebar {
         let pref_label = gtk::Label::builder()
             .label("Preferences")
             .halign(gtk::Align::Start)
+            .css_classes(["sidebar-footer-label"])
             .build();
         
         pref_content.append(&pref_icon);
