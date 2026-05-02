@@ -111,14 +111,13 @@ fn setup_actions(app: &Application) {
                     
                     if is_dir {
                         let settings = gio::Settings::new("com.example.ArchFinder");
-                        let view_type: String = settings.get("view-type");
-                        if view_type == "icons" {
-                             if let Some(app) = gio::Application::default() {
-                                 glib::idle_add_local(move || {
-                                     app.activate();
-                                     glib::ControlFlow::Break
-                                 });
-                             }
+                        let _ = settings.set_string("current-path", &path.to_string_lossy());
+                        
+                        if let Some(app) = gio::Application::default() {
+                             glib::idle_add_local(move || {
+                                 app.activate();
+                                 glib::ControlFlow::Break
+                             });
                         }
                     } else {
                         let file = gio::File::for_path(path);
@@ -487,10 +486,12 @@ fn build_ui(app: &Application) {
         sidebar.list_box.connect_row_activated(move |_, list_row| {
             let path_string = list_row.widget_name();
             let path = PathBuf::from(path_string.as_str());
+            let settings = gio::Settings::new("com.example.ArchFinder");
+            let _ = settings.set_string("current-path", &path.to_string_lossy());
+
             let manager_clone = manager_sidebar_clone.clone();
             glib::idle_add_local(move || {
-                let path = path.clone();
-                manager_clone.add_column(path, 0);
+                manager_clone.add_column(path.clone(), 0);
                 glib::ControlFlow::Break
             });
         });
@@ -499,10 +500,20 @@ fn build_ui(app: &Application) {
         root_layout.append(&sep);
     }
 
+    let settings = gio::Settings::new("com.example.ArchFinder");
+    let current_path_str: String = settings.get("current-path");
+    let initial_path = if current_path_str.is_empty() {
+        glib::home_dir()
+    } else {
+        PathBuf::from(current_path_str)
+    };
+
     if view_type == "miller" {
         main_content.append(&manager.scrolled_window);
         root_layout.append(&main_content);
 
+        // For Miller, we still start at Home, or do we want to start at current_path?
+        // Let's start at home as per Miller standard, but Icon View uses initial_path.
         let first_list_view = manager.add_column(glib::home_dir(), 0);
 
         window.set_content(Some(&root_layout));
@@ -513,20 +524,10 @@ fn build_ui(app: &Application) {
             lv.grab_focus();
         }
     } else if view_type == "icons" {
-        let current_path = manager.current_selection.borrow().as_ref()
-            .map(|s| {
-                if s.path.is_dir() {
-                    s.path.clone()
-                } else {
-                    s.path.parent().unwrap_or(&s.path).to_path_buf()
-                }
-            })
-            .unwrap_or_else(glib::home_dir);
-            
-        let icon_view = IconView::new(&current_path, show_hidden, zoom_level);
+        let icon_view = IconView::new(&initial_path, show_hidden, zoom_level);
         
         let manager_icon_clone = manager.clone();
-        let path_icon_clone = current_path.clone();
+        let path_icon_clone = initial_path.clone();
         icon_view.grid_view.model().unwrap().connect_selection_changed(move |selection_model, _, _| {
             let selection_model = selection_model.downcast_ref::<gtk::SingleSelection>().unwrap();
             manager_icon_clone.handle_selection_change(selection_model, &path_icon_clone, 0);

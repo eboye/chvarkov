@@ -26,5 +26,10 @@
       <summary>Show sidebar</summary>
       <description>Whether the navigation sidebar is visible.</description>
     </key>
+    <key name="current-path" type="s">
+      <default>''</default>
+      <summary>Current path</summary>
+      <description>The currently active directory path.</description>
+    </key>
   </schema>
 </schemalist>
