@@ -45,7 +45,7 @@ fn create_context_menu() -> gio::Menu {
 }
 
 impl Column {
-    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool) -> Self {
+    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, zoom_level: i32) -> Self {
         let file = gio::File::for_path(path);
         let directory_list = gtk::DirectoryList::builder()
             .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,standard::is-symlink-target-directory")
@@ -81,9 +81,27 @@ impl Column {
             .can_unselect(true)
             .build();
         
-        println!("Column created for: {:?}", path);
-        
         let factory = gtk::SignalListItemFactory::new();
+        
+        // Calculate sizes based on zoom level
+        let icon_size = match zoom_level {
+            0 => 16,
+            1 => 24,
+            2 => 32,
+            3 => 48,
+            4 => 64,
+            _ => 96,
+        };
+
+        let font_size = match zoom_level {
+            0 => 10,
+            1 => 11,
+            2 => 12,
+            3 => 14,
+            4 => 16,
+            _ => 18,
+        };
+
         factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
             let root_box = gtk::Box::builder()
@@ -95,7 +113,7 @@ impl Column {
                 .build();
 
             let image = gtk::Image::builder()
-                .icon_size(gtk::IconSize::Normal)
+                .pixel_size(icon_size)
                 .valign(gtk::Align::Center)
                 .build();
             
@@ -110,6 +128,15 @@ impl Column {
                 .xalign(0.0)
                 .build();
             
+            // Set font size via inline CSS or attribute list (Pango)
+            // Using attribute list is cleaner for labels
+            let attrs = gtk::pango::AttrList::new();
+            let mut font_attr = gtk::pango::AttrSize::new(font_size * gtk::pango::SCALE);
+            font_attr.set_start_index(0);
+            font_attr.set_end_index(u32::MAX);
+            attrs.insert(font_attr);
+            label.set_attributes(Some(&attrs));
+
             text_box.append(&label);
 
             if show_meta {
@@ -119,6 +146,14 @@ impl Column {
                     .xalign(0.0)
                     .css_classes(["caption", "dim-label"])
                     .build();
+                
+                let meta_attrs = gtk::pango::AttrList::new();
+                let mut meta_font_attr = gtk::pango::AttrSize::new((font_size - 2).max(8) * gtk::pango::SCALE);
+                meta_font_attr.set_start_index(0);
+                meta_font_attr.set_end_index(u32::MAX);
+                meta_attrs.insert(meta_font_attr);
+                meta_label.set_attributes(Some(&meta_attrs));
+
                 text_box.append(&meta_label);
             }
 
@@ -148,7 +183,6 @@ impl Column {
                     let menu = create_context_menu();
                     let popover = gtk::PopoverMenu::from_model(Some(&menu));
                     popover.set_parent(&widget);
-                    // Point to the middle of the widget
                     let width = widget.width();
                     let height = widget.height();
                     popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
@@ -201,7 +235,7 @@ impl Column {
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .width_request(200)
+            .width_request(200 + (zoom_level * 40))
             .build();
         
         scrolled_window.set_child(Some(&list_view));
@@ -213,7 +247,7 @@ impl Column {
         let drag_gesture = gtk::GestureDrag::new();
         let sw_weak = scrolled_window.downgrade();
         
-        let start_width = std::rc::Rc::new(std::cell::Cell::new(200));
+        let start_width = std::rc::Rc::new(std::cell::Cell::new(200 + (zoom_level * 40)));
         let start_width_clone = start_width.clone();
         
         drag_gesture.connect_drag_begin(move |_, _, _| {

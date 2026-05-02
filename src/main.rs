@@ -204,6 +204,47 @@ fn setup_actions(app: &Application) {
     app.add_action(&show_meta_action);
     app.set_accels_for_action("app.show-meta", &["<Control>m"]);
 
+    let zoom_action = gio::SimpleAction::new_stateful("zoom", Some(glib::VariantTy::new("i").unwrap()), &0.to_variant());
+    let app_weak_z = app.downgrade();
+    zoom_action.connect_change_state(move |action, state| {
+        if let Some(state) = state {
+            let val = state.get::<i32>().unwrap();
+            if val >= 0 && val <= 5 {
+                action.set_state(&val.to_variant());
+                if let Some(app) = app_weak_z.upgrade() {
+                    app.activate();
+                }
+            }
+        }
+    });
+    app.add_action(&zoom_action);
+
+    let zoom_in_action = gio::SimpleAction::new("zoom-in", None);
+    let app_weak_zi = app.downgrade();
+    zoom_in_action.connect_activate(move |_, _| {
+        if let Some(app) = app_weak_zi.upgrade() {
+            if let Some(action) = app.lookup_action("zoom") {
+                let current = action.downcast::<gio::SimpleAction>().unwrap().state().unwrap().get::<i32>().unwrap();
+                app.activate_action("zoom", Some(&(current + 1).to_variant()));
+            }
+        }
+    });
+    app.add_action(&zoom_in_action);
+    app.set_accels_for_action("app.zoom-in", &["<Control>plus", "<Control>equal"]);
+
+    let zoom_out_action = gio::SimpleAction::new("zoom-out", None);
+    let app_weak_zo = app.downgrade();
+    zoom_out_action.connect_activate(move |_, _| {
+        if let Some(app) = app_weak_zo.upgrade() {
+            if let Some(action) = app.lookup_action("zoom") {
+                let current = action.downcast::<gio::SimpleAction>().unwrap().state().unwrap().get::<i32>().unwrap();
+                app.activate_action("zoom", Some(&(current - 1).to_variant()));
+            }
+        }
+    });
+    app.add_action(&zoom_out_action);
+    app.set_accels_for_action("app.zoom-out", &["<Control>minus"]);
+
     let view_type_action = gio::SimpleAction::new_stateful("view-type", Some(glib::VariantTy::new("s").unwrap()), &"miller".to_variant());
     let app_weak_v = app.downgrade();
     view_type_action.connect_change_state(move |action, state| {
@@ -315,6 +356,11 @@ fn build_ui(app: &Application) {
         .map(|a| a.state().unwrap().get::<bool>().unwrap())
         .unwrap_or(false);
 
+    let zoom_level = app.lookup_action("zoom")
+        .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
+        .map(|a| a.state().unwrap().get::<i32>().unwrap())
+        .unwrap_or(0);
+
     let scrolled_window = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vscrollbar_policy(gtk::PolicyType::Never)
@@ -328,7 +374,7 @@ fn build_ui(app: &Application) {
 
     scrolled_window.set_child(Some(&columns_box));
 
-    let manager = ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta);
+    let manager = ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level);
     
     let preview_action = app.lookup_action("preview").unwrap().downcast::<gio::SimpleAction>().unwrap();
     let manager_preview_clone = manager.clone();
@@ -375,6 +421,28 @@ fn build_ui(app: &Application) {
     }
 }
 
+fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
+    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+    
+    let popup = adw::Window::builder()
+        .transient_for(parent)
+        .default_width(800)
+        .default_height(600)
+        .modal(true)
+        .content(&preview_layout)
+        .build();
+    
+    let key_controller = gtk::EventControllerKey::new();
+    let popup_clone = popup.clone();
+    key_controller.connect_key_pressed(move |_, _, _, _| {
+        popup_clone.close();
+        glib::Propagation::Stop
+    });
+    popup.add_controller(key_controller);
+
+    popup.present();
+}
+
 #[derive(Clone)]
 struct SelectionInfo {
     file_info: gio::FileInfo,
@@ -394,18 +462,20 @@ struct ColumnManager {
     scrolled_window: ScrolledWindow,
     show_hidden: bool,
     show_meta: bool,
+    zoom_level: i32,
     entries: Rc<RefCell<Vec<ColumnEntry>>>,
     current_selection: Rc<RefCell<Option<SelectionInfo>>>,
     preview_window: Rc<RefCell<Option<adw::Window>>>,
 }
 
 impl ColumnManager {
-    fn new(columns_box: Box, scrolled_window: ScrolledWindow, show_hidden: bool, show_meta: bool) -> Self {
+    fn new(columns_box: Box, scrolled_window: ScrolledWindow, show_hidden: bool, show_meta: bool, zoom_level: i32) -> Self {
         Self {
             columns_box,
             scrolled_window,
             show_hidden,
             show_meta,
+            zoom_level,
             entries: Rc::new(RefCell::new(Vec::new())),
             current_selection: Rc::new(RefCell::new(None)),
             preview_window: Rc::new(RefCell::new(None)),
@@ -489,7 +559,6 @@ impl ColumnManager {
     }
 
     fn add_column(&self, path: PathBuf, index: usize) -> Option<gtk::ListView> {
-        // Check if we already have this path open at this index
         {
             let entries = self.entries.borrow();
             if index < entries.len() && entries[index].path == path {
@@ -497,7 +566,7 @@ impl ColumnManager {
             }
         }
 
-        let column = Column::new(&path, self.show_hidden, self.show_meta);
+        let column = Column::new(&path, self.show_hidden, self.show_meta, self.zoom_level);
         let column_widget = column.widget.clone().upcast::<gtk::Widget>();
         let list_view = column.list_view.clone();
         
@@ -517,25 +586,24 @@ impl ColumnManager {
             });
         }
 
-        // Auto-scroll to the new column
         let adj = self.scrolled_window.hadjustment();
         glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
             adj.set_value(adj.upper() - adj.page_size());
             glib::ControlFlow::Break
         });
-let self_clone = self.clone();
-let path_clone = path.clone();
-let index_clone = index;
-column.selection_model.connect_selection_changed(move |selection_model, _, _| {
-    let self_idle = self_clone.clone();
-    let selection_idle = selection_model.clone();
-    let path_idle = path_clone.clone();
-    glib::idle_add_local(move || {
-        self_idle.handle_selection_change(&selection_idle, &path_idle, index_clone);
-        glib::ControlFlow::Break
-    });
-});
 
+        let self_clone = self.clone();
+        let path_clone = path.clone();
+        let index_clone = index;
+        column.selection_model.connect_selection_changed(move |selection_model, _, _| {
+            let self_idle = self_clone.clone();
+            let selection_idle = selection_model.clone();
+            let path_idle = path_clone.clone();
+            glib::idle_add_local(move || {
+                self_idle.handle_selection_change(&selection_idle, &path_idle, index_clone);
+                glib::ControlFlow::Break
+            });
+        });
 
         let key_controller = gtk::EventControllerKey::new();
         let self_key_clone = self.clone();
@@ -545,13 +613,11 @@ column.selection_model.connect_selection_changed(move |selection_model, _, _| {
             if key == gtk::gdk::Key::Right {
                 let selection_model = list_view_focus.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
                 
-                // If nothing is selected, select the first item
                 if selection_model.selected() == gtk::INVALID_LIST_POSITION {
                     selection_model.set_selected(0);
                     return glib::Propagation::Stop;
                 }
 
-                // Ensure expansion logic is run
                 self_key_clone.handle_selection_change(&selection_model, &path_key_clone, index);
 
                 let entries = self_key_clone.entries.borrow();
@@ -560,7 +626,6 @@ column.selection_model.connect_selection_changed(move |selection_model, _, _| {
                     let target_entry = &entries[index + 1];
                     let target = &target_entry.focus_target;
                     
-                    // Automatically select first item in new column if needed
                     if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
                         let sel = lv.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
                         if sel.selected() == gtk::INVALID_LIST_POSITION {
@@ -613,8 +678,6 @@ column.selection_model.connect_selection_changed(move |selection_model, _, _| {
             if ftype == gio::FileType::Directory || fs_is_dir {
                 self.add_column(new_path, index + 1);
             } else {
-                // If it's a file, we should only clear sub-columns if the path is DIFFERENT
-                // from the current sub-column (which might be a preview).
                 let mut entries = self.entries.borrow_mut();
                 
                 let should_replace = if index + 1 < entries.len() {
