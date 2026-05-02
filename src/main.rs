@@ -171,8 +171,6 @@ fn setup_actions(app: &Application) {
         if let Some(state) = state {
             action.set_state(state);
             if let Some(app) = app_weak_s.upgrade() {
-                // We'll handle the actual toggle via a property binding or manual call
-                // For now, let's just trigger a UI refresh to keep it simple
                 app.activate();
             }
         }
@@ -228,8 +226,17 @@ fn build_ui(app: &Application) {
             .build()
     };
 
-    let content = Box::builder()
+    // To make sidebar take full vertical space, it must be side-by-side with the main content area (which includes the toolbar)
+    let root_layout = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+
+    let main_content = Box::builder()
         .orientation(Orientation::Vertical)
+        .hexpand(true)
+        .vexpand(true)
         .build();
 
     let header_bar = HeaderBar::builder()
@@ -294,15 +301,8 @@ fn build_ui(app: &Application) {
         .build();
     header_bar.pack_start(&view_type_btn);
 
-    content.append(&header_bar);
+    main_content.append(&header_bar);
 
-    // Main View with Sidebar
-    let main_view = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .hexpand(true)
-        .vexpand(true)
-        .build();
-    
     let show_sidebar = app.lookup_action("toggle-sidebar")
         .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
         .map(|a| a.state().unwrap().get::<bool>().unwrap())
@@ -318,50 +318,50 @@ fn build_ui(app: &Application) {
         .map(|a| a.state().unwrap().get::<bool>().unwrap())
         .unwrap_or(false);
 
-    if view_type == "miller" {
-        let scrolled_window = ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
-            .vscrollbar_policy(gtk::PolicyType::Never)
-            .hexpand(true)
-            .vexpand(true)
-            .build();
+    let scrolled_window = ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .hexpand(true)
+        .vexpand(true)
+        .build();
 
-        let columns_box = Box::builder()
-            .orientation(Orientation::Horizontal)
-            .build();
+    let columns_box = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .build();
 
-        scrolled_window.set_child(Some(&columns_box));
+    scrolled_window.set_child(Some(&columns_box));
 
-        let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
+    let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
+    
+    let preview_action = app.lookup_action("preview").unwrap().downcast::<gio::SimpleAction>().unwrap();
+    let manager_preview_clone = manager.clone();
+    let window_preview_clone = window.clone();
+    preview_action.connect_activate(move |_, _| {
+        manager_preview_clone.toggle_preview(&window_preview_clone);
+    });
+
+    if show_sidebar {
+        let sidebar = Sidebar::new();
+        root_layout.append(&sidebar.widget);
         
-        let preview_action = app.lookup_action("preview").unwrap().downcast::<gio::SimpleAction>().unwrap();
-        let manager_preview_clone = manager.clone();
-        let window_preview_clone = window.clone();
-        preview_action.connect_activate(move |_, _| {
-            manager_preview_clone.toggle_preview(&window_preview_clone);
+        let manager_sidebar_clone = manager.clone();
+        sidebar.list_box.connect_row_activated(move |_, list_row| {
+            let path_string = list_row.widget_name();
+            let path = PathBuf::from(path_string.as_str());
+            manager_sidebar_clone.add_column(path, 0);
         });
 
-        if show_sidebar {
-            let sidebar = Sidebar::new();
-            main_view.append(&sidebar.widget);
-            
-            let manager_sidebar_clone = manager.clone();
-            sidebar.list_box.connect_row_activated(move |_, list_row| {
-                let path_string = list_row.widget_name();
-                let path = PathBuf::from(path_string.as_str());
-                manager_sidebar_clone.add_column(path, 0);
-            });
+        let sep = gtk::Separator::new(Orientation::Vertical);
+        root_layout.append(&sep);
+    }
 
-            let sep = gtk::Separator::new(Orientation::Vertical);
-            main_view.append(&sep);
-        }
-
-        main_view.append(&scrolled_window);
-        content.append(&main_view);
+    if view_type == "miller" {
+        main_content.append(&scrolled_window);
+        root_layout.append(&main_content);
 
         let first_list_view = manager.add_column(glib::home_dir(), 0);
 
-        window.set_content(Some(&content));
+        window.set_content(Some(&root_layout));
         window.present();
 
         if let Some(lv) = first_list_view {
@@ -371,8 +371,9 @@ fn build_ui(app: &Application) {
     } else {
         let label = gtk::Label::new(Some(&format!("{} view is not yet implemented", view_type)));
         label.set_vexpand(true);
-        content.append(&label);
-        window.set_content(Some(&content));
+        main_content.append(&label);
+        root_layout.append(&main_content);
+        window.set_content(Some(&root_layout));
         window.present();
     }
 }
