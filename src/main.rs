@@ -785,9 +785,10 @@ fn build_ui(app: &Application) {
         .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vscrollbar_policy(gtk::PolicyType::Never)
         .child(&breadcrumb_bar)
+        .visible(false)
         .build();
     
-    manager.set_breadcrumb_container(breadcrumb_bar.clone());
+    manager.set_breadcrumb_container(breadcrumb_bar.clone(), breadcrumb_scrolled.clone());
 
     let current_path_str: String = settings.get("current-path");
     let default_path_str: String = settings.get("default-path");
@@ -915,6 +916,7 @@ struct ColumnManager {
     columns_box: Box,
     scrolled_window: ScrolledWindow,
     breadcrumb_container: Rc<RefCell<Option<Box>>>,
+    breadcrumb_parent: Rc<RefCell<Option<ScrolledWindow>>>,
     show_hidden: bool,
     show_meta: bool,
     zoom_level: i32,
@@ -931,6 +933,7 @@ impl ColumnManager {
             columns_box,
             scrolled_window,
             breadcrumb_container: Rc::new(RefCell::new(None)),
+            breadcrumb_parent: Rc::new(RefCell::new(None)),
             show_hidden,
             show_meta,
             zoom_level,
@@ -942,8 +945,9 @@ impl ColumnManager {
         }
     }
 
-    fn set_breadcrumb_container(&self, container: Box) {
+    fn set_breadcrumb_container(&self, container: Box, parent: ScrolledWindow) {
         *self.breadcrumb_container.borrow_mut() = Some(container);
+        *self.breadcrumb_parent.borrow_mut() = Some(parent);
     }
 
     fn update_breadcrumbs(&self, path: &std::path::Path) {
@@ -963,6 +967,10 @@ impl ColumnManager {
                 current = p.parent();
             }
             parts.reverse();
+
+            if let Some(parent) = self.breadcrumb_parent.borrow().as_ref() {
+                parent.set_visible(!parts.is_empty());
+            }
 
             for (i, (name, p)) in parts.iter().enumerate() {
                 if i > 0 {
