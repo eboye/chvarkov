@@ -17,10 +17,55 @@ fn main() {
         .application_id("com.example.ArchFinder")
         .build();
 
-    application.connect_startup(setup_actions);
+    application.connect_startup(|app| {
+        setup_actions(app);
+        setup_styles();
+    });
     application.connect_activate(build_ui);
 
     application.run();
+}
+
+fn setup_styles() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data("
+        /* Focused list selection - Vibrant accent color */
+        listview:focus row:selected {
+            background-color: @accent_bg_color;
+            color: @accent_fg_color;
+            border-radius: 6px;
+        }
+
+        /* Unfocused list selection (parent columns) - Subdued color */
+        listview row:selected {
+            background-color: alpha(@accent_bg_color, 0.2);
+            color: @view_fg_color;
+            border-radius: 6px;
+        }
+
+        /* Hover effect for rows */
+        listview row:hover:not(:selected) {
+            background-color: alpha(@accent_bg_color, 0.05);
+        }
+
+        /* Make resizer more visible and interactive */
+        separator.resizer {
+            background-color: alpha(@borders, 0.3);
+            min-width: 1px;
+            margin: 0;
+            padding: 0;
+        }
+        separator.resizer:hover {
+            background-color: @accent_bg_color;
+            min-width: 2px;
+        }
+    ");
+
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().expect("Could not connect to a display."),
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 }
 
 fn setup_actions(app: &Application) {
