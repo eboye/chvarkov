@@ -317,7 +317,7 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.invert-selection", &["<Control>i"]);
 
     // Use GSettings for persistent actions
-    let toggle_sidebar_action = gio::SimpleAction::new_stateful("show-sidebar", None, &settings.value("show-sidebar"));
+    let toggle_sidebar_action = gio::SimpleAction::new_stateful("toggle-sidebar", None, &settings.value("show-sidebar"));
     let app_weak_s = app.downgrade();
     let settings_s = settings.clone();
     toggle_sidebar_action.connect_change_state(move |action, state| {
@@ -738,7 +738,7 @@ fn build_ui(app: &Application) {
     view_btn_label.set_visible(initial_width > 900);
     sort_btn_label.set_visible(initial_width > 900);
 
-    let show_sidebar = app.lookup_action("show-sidebar")
+    let show_sidebar = app.lookup_action("toggle-sidebar")
         .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
         .map(|a| a.state().unwrap().get::<bool>().unwrap())
         .unwrap_or(true);
