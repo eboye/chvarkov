@@ -67,7 +67,7 @@ impl ListView {
             .focusable(true)
             .build();
 
-        // 1. Name Column (with TreeExpander and Context Menu)
+        // 1. Name Column (with TreeExpander)
         let name_factory = gtk::SignalListItemFactory::new();
         name_factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
@@ -76,7 +76,6 @@ impl ListView {
             let container = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
-                .focusable(true) // Crucial for catching keyboard events
                 .build();
             
             let image = gtk::Image::new();
@@ -88,7 +87,7 @@ impl ListView {
             container.append(&image);
             container.append(&label);
             
-            // Context menu gesture on the container
+            // Context menu right-click gesture still works on the row content
             let gesture_right = gtk::GestureClick::builder()
                 .button(3)
                 .build();
@@ -102,26 +101,7 @@ impl ListView {
                 popover.popup();
             });
 
-            // Keyboard Menu/Shift+F10 on the container
-            let key_controller = gtk::EventControllerKey::new();
-            let container_clone = container.clone();
-            key_controller.connect_key_pressed(move |_, key, _, modifier| {
-                if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
-                    let widget = container_clone.clone().upcast::<gtk::Widget>();
-                    let menu = utils::create_context_menu();
-                    let popover = gtk::PopoverMenu::from_model(Some(&menu));
-                    popover.set_parent(&widget);
-                    let width = widget.width();
-                    let height = widget.height();
-                    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
-                    popover.popup();
-                    return glib::Propagation::Stop;
-                }
-                glib::Propagation::Proceed
-            });
-
             container.add_controller(gesture_right);
-            container.add_controller(key_controller);
             
             expander.set_child(Some(&container));
             list_item.set_child(Some(&expander));
@@ -258,18 +238,34 @@ impl ListView {
             }
         });
 
-        // Keyboard navigation for expansion/collapse
+        // Universal Keyboard Shortcut Controller on the ColumnView itself
         let key_ctrl = gtk::EventControllerKey::new();
         key_ctrl.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let sel_model_nav = selection_model.clone();
-        key_ctrl.connect_key_pressed(move |_, key, _, _| {
-            let selection = sel_model_nav.selection();
+        let sel_model_shortcuts = selection_model.clone();
+        let cv_shortcuts = column_view.clone();
+        key_ctrl.connect_key_pressed(move |_, key, _, modifier| {
+            let selection = sel_model_shortcuts.selection();
             if selection.is_empty() { return glib::Propagation::Proceed; }
             
             let first_idx = selection.minimum();
-            let model = sel_model_nav.model().unwrap();
+            let model = sel_model_shortcuts.model().unwrap();
             let item = model.item(first_idx);
-            
+
+            // Handle Context Menu (Menu key or Shift+F10)
+            if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
+                let menu = utils::create_context_menu();
+                let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                popover.set_parent(&cv_shortcuts);
+                
+                // Point to middle of current focus if possible, or just center
+                let width = cv_shortcuts.width();
+                let height = cv_shortcuts.height();
+                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
+                popover.popup();
+                return glib::Propagation::Stop;
+            }
+
+            // Handle Tree expansion
             if let Some(tree_row) = item.and_downcast::<gtk::TreeListRow>() {
                 if key == gtk::gdk::Key::Right {
                     if tree_row.is_expandable() && !tree_row.is_expanded() {

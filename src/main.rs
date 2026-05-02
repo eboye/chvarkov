@@ -82,7 +82,7 @@ fn setup_styles() {
             border-right: 1px solid alpha(@borders, 0.3);
         }
 
-        /* Absolute Padding Removal for Alignment */
+        /* Absolute Alignment Scrub */
         .sidebar-title-area, headerbar, .headerbar {
             background: none;
             background-color: @window_bg_color;
@@ -98,6 +98,7 @@ fn setup_styles() {
             font-weight: bold;
             margin: 0;
             padding: 0;
+            min-height: 46px; /* Match area height exactly */
         }
         
         .sidebar-footer-area, .breadcrumb-container-scrolled {
@@ -106,7 +107,7 @@ fn setup_styles() {
             box-sizing: border-box;
             padding: 0 !important;
             margin: 0 !important;
-            min-height: 40px;
+            min-height: 36px; /* Tight bottom bar */
         }
 
         .sidebar-footer-label {
@@ -128,11 +129,14 @@ fn setup_styles() {
 
         .breadcrumb-bar {
             background-color: @window_bg_color;
+            margin: 0 !important;
+            padding: 0 !important;
         }
 
         .breadcrumb-bar button {
-            padding: 4px 8px;
+            padding: 2px 8px;
             font-size: 0.9rem;
+            margin: 0;
         }
         .breadcrumb-bar button:hover {
             background-color: alpha(@accent_bg_color, 0.1);
@@ -818,12 +822,12 @@ fn build_ui(app: &Application) {
     let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level, sort_type, folders_first));
     ACTIVE_MANAGER.with(|m| *m.borrow_mut() = Some(manager.clone()));
 
-    // Breadcrumb Bar
+    // Breadcrumb Bar - Zero margins for absolute alignment
     let breadcrumb_bar = Box::builder()
         .orientation(Orientation::Horizontal)
         .css_classes(["linked", "breadcrumb-bar"])
-        .margin_top(4)
-        .margin_bottom(4)
+        .margin_top(0)
+        .margin_bottom(0)
         .margin_start(12)
         .margin_end(12)
         .build();
@@ -858,7 +862,7 @@ fn build_ui(app: &Application) {
 
         // Sync Sidebar Footer height with Breadcrumb Bar exactly
         let footer_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
-        footer_size_group.add_widget(&breadcrumb_bar);
+        footer_size_group.add_widget(&breadcrumb_scrolled);
         footer_size_group.add_widget(&sidebar.pref_footer);
 
         root_layout.append(&sidebar.widget);
