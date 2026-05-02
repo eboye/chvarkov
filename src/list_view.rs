@@ -251,12 +251,40 @@ impl ListView {
             column_view.append_column(&size_col);
         }
 
-        // activations
+        // Context menu and activations
         column_view.connect_activate(move |_, _| {
             if let Some(app) = gio::Application::default() {
                 app.activate_action("open", None);
             }
         });
+
+        // Keyboard navigation for expansion/collapse
+        let key_ctrl = gtk::EventControllerKey::new();
+        let sel_model_nav = selection_model.clone();
+        key_ctrl.connect_key_pressed(move |_, key, _, _| {
+            let selection = sel_model_nav.selection();
+            if selection.is_empty() { return glib::Propagation::Proceed; }
+            
+            let first_idx = selection.nth(0);
+            let model = sel_model_nav.model().unwrap();
+            let item = model.item(first_idx);
+            
+            if let Some(tree_row) = item.and_downcast::<gtk::TreeListRow>() {
+                if key == gtk::gdk::Key::Right {
+                    if tree_row.is_expandable() && !tree_row.is_expanded() {
+                        tree_row.set_expanded(true);
+                        return glib::Propagation::Stop;
+                    }
+                } else if key == gtk::gdk::Key::Left {
+                    if tree_row.is_expanded() {
+                        tree_row.set_expanded(false);
+                        return glib::Propagation::Stop;
+                    }
+                }
+            }
+            glib::Propagation::Proceed
+        });
+        column_view.add_controller(key_ctrl);
 
         // Click-to-deselect
         let click_gesture = gtk::GestureClick::builder().button(1).build();
