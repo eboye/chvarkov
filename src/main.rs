@@ -110,17 +110,17 @@ fn setup_actions(app: &Application) {
                     let is_dir = file_info.file_type() == gio::FileType::Directory || path.is_dir();
                     
                     if is_dir {
-                        // For Icon View, we update the path. For Miller, it's already handled.
-                        // We check the current view type.
                         let settings = gio::Settings::new("com.example.ArchFinder");
                         let view_type: String = settings.get("view-type");
                         if view_type == "icons" {
                              if let Some(app) = gio::Application::default() {
-                                 app.activate(); // Refresh UI to new path
+                                 glib::idle_add_local(move || {
+                                     app.activate();
+                                     glib::ControlFlow::Break
+                                 });
                              }
                         }
                     } else {
-                        // Launch default application
                         let file = gio::File::for_path(path);
                         gio::AppInfo::launch_default_for_uri(&file.uri(), None::<&gio::AppLaunchContext>).ok();
                     }
@@ -228,7 +228,10 @@ fn setup_actions(app: &Application) {
             action.set_state(&state);
             let _ = settings_s.set_value("show-sidebar", &state);
             if let Some(app) = app_weak_s.upgrade() {
-                app.activate();
+                glib::idle_add_local(move || {
+                    app.activate();
+                    glib::ControlFlow::Break
+                });
             }
         }
     });
@@ -243,7 +246,10 @@ fn setup_actions(app: &Application) {
             action.set_state(&state);
             let _ = settings_h.set_value("show-hidden", &state);
             if let Some(app) = app_weak_h.upgrade() {
-                app.activate();
+                glib::idle_add_local(move || {
+                    app.activate();
+                    glib::ControlFlow::Break
+                });
             }
         }
     });
@@ -258,7 +264,10 @@ fn setup_actions(app: &Application) {
             action.set_state(&state);
             let _ = settings_m.set_value("show-meta", &state);
             if let Some(app) = app_weak_m.upgrade() {
-                app.activate();
+                glib::idle_add_local(move || {
+                    app.activate();
+                    glib::ControlFlow::Break
+                });
             }
         }
     });
@@ -275,7 +284,10 @@ fn setup_actions(app: &Application) {
                 action.set_state(&val.to_variant());
                 let _ = settings_z.set_value("zoom-level", &val.to_variant());
                 if let Some(app) = app_weak_z.upgrade() {
-                    app.activate();
+                    glib::idle_add_local(move || {
+                        app.activate();
+                        glib::ControlFlow::Break
+                    });
                 }
             }
         }
@@ -316,7 +328,10 @@ fn setup_actions(app: &Application) {
             action.set_state(&state);
             let _ = settings_v.set_value("view-type", &state);
             if let Some(app) = app_weak_v.upgrade() {
-                app.activate();
+                glib::idle_add_local(move || {
+                    app.activate();
+                    glib::ControlFlow::Break
+                });
             }
         }
     });
@@ -472,7 +487,12 @@ fn build_ui(app: &Application) {
         sidebar.list_box.connect_row_activated(move |_, list_row| {
             let path_string = list_row.widget_name();
             let path = PathBuf::from(path_string.as_str());
-            manager_sidebar_clone.add_column(path, 0);
+            let manager_clone = manager_sidebar_clone.clone();
+            glib::idle_add_local(move || {
+                let path = path.clone();
+                manager_clone.add_column(path, 0);
+                glib::ControlFlow::Break
+            });
         });
 
         let sep = gtk::Separator::new(Orientation::Vertical);
