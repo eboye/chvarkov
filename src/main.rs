@@ -1,5 +1,6 @@
 mod column;
 mod preview;
+mod sidebar;
 
 use libadwaita as adw;
 use adw::prelude::*;
@@ -9,6 +10,7 @@ use gtk::{Box, Orientation, ScrolledWindow};
 use std::path::PathBuf;
 use column::Column;
 use preview::Preview;
+use sidebar::Sidebar;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -58,6 +60,10 @@ fn setup_styles() {
         separator.resizer:hover {
             background-color: @accent_bg_color;
             min-width: 2px;
+        }
+        
+        .navigation-sidebar {
+            background-color: @window_bg_color;
         }
     ");
 
@@ -159,6 +165,21 @@ fn setup_actions(app: &Application) {
     app.add_action(&preview_action);
     app.set_accels_for_action("app.preview", &["space"]);
 
+    let toggle_sidebar_action = gio::SimpleAction::new_stateful("toggle-sidebar", None, &true.to_variant());
+    let app_weak_s = app.downgrade();
+    toggle_sidebar_action.connect_change_state(move |action, state| {
+        if let Some(state) = state {
+            action.set_state(state);
+            if let Some(app) = app_weak_s.upgrade() {
+                // We'll handle the actual toggle via a property binding or manual call
+                // For now, let's just trigger a UI refresh to keep it simple
+                app.activate();
+            }
+        }
+    });
+    app.add_action(&toggle_sidebar_action);
+    app.set_accels_for_action("app.toggle-sidebar", &["F9"]);
+
     let show_hidden_action = gio::SimpleAction::new_stateful("show-hidden", None, &false.to_variant());
     let app_weak_h = app.downgrade();
     show_hidden_action.connect_change_state(move |action, state| {
@@ -202,8 +223,8 @@ fn build_ui(app: &Application) {
     } else {
         ApplicationWindow::builder()
             .application(app)
-            .default_width(1000)
-            .default_height(600)
+            .default_width(1200)
+            .default_height(800)
             .build()
     };
 
@@ -214,6 +235,14 @@ fn build_ui(app: &Application) {
     let header_bar = HeaderBar::builder()
         .title_widget(&adw::WindowTitle::new("Arch-Finder", ""))
         .build();
+
+    // Toggle Sidebar Button
+    let toggle_sidebar_btn = gtk::ToggleButton::builder()
+        .icon_name("sidebar-show-symbolic")
+        .tooltip_text("Toggle Sidebar (F9)")
+        .action_name("app.toggle-sidebar")
+        .build();
+    header_bar.pack_start(&toggle_sidebar_btn);
 
     // Group 1: Display Toggles (Linked)
     let display_group = Box::builder()
@@ -267,6 +296,28 @@ fn build_ui(app: &Application) {
 
     content.append(&header_bar);
 
+    // Main View with Sidebar
+    let main_view = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+    
+    let show_sidebar = app.lookup_action("toggle-sidebar")
+        .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
+        .map(|a| a.state().unwrap().get::<bool>().unwrap())
+        .unwrap_or(true);
+
+    let show_hidden = app.lookup_action("show-hidden")
+        .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
+        .map(|a| a.state().unwrap().get::<bool>().unwrap())
+        .unwrap_or(false);
+
+    let show_meta = app.lookup_action("show-meta")
+        .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
+        .map(|a| a.state().unwrap().get::<bool>().unwrap())
+        .unwrap_or(false);
+
     if view_type == "miller" {
         let scrolled_window = ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Automatic)
@@ -280,17 +331,6 @@ fn build_ui(app: &Application) {
             .build();
 
         scrolled_window.set_child(Some(&columns_box));
-        content.append(&scrolled_window);
-
-        let show_hidden = app.lookup_action("show-hidden")
-            .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
-            .map(|a| a.state().unwrap().get::<bool>().unwrap())
-            .unwrap_or(false);
-
-        let show_meta = app.lookup_action("show-meta")
-            .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
-            .map(|a| a.state().unwrap().get::<bool>().unwrap())
-            .unwrap_or(false);
 
         let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
         
@@ -300,6 +340,24 @@ fn build_ui(app: &Application) {
         preview_action.connect_activate(move |_, _| {
             manager_preview_clone.toggle_preview(&window_preview_clone);
         });
+
+        if show_sidebar {
+            let sidebar = Sidebar::new();
+            main_view.append(&sidebar.widget);
+            
+            let manager_sidebar_clone = manager.clone();
+            sidebar.list_box.connect_row_activated(move |_, list_row| {
+                let path_string = list_row.widget_name();
+                let path = PathBuf::from(path_string.as_str());
+                manager_sidebar_clone.add_column(path, 0);
+            });
+
+            let sep = gtk::Separator::new(Orientation::Vertical);
+            main_view.append(&sep);
+        }
+
+        main_view.append(&scrolled_window);
+        content.append(&main_view);
 
         let first_list_view = manager.add_column(glib::home_dir(), 0);
 
@@ -319,6 +377,28 @@ fn build_ui(app: &Application) {
     }
 }
 
+fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
+    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+    
+    let popup = adw::Window::builder()
+        .transient_for(parent)
+        .default_width(800)
+        .default_height(600)
+        .modal(true)
+        .content(&preview_layout)
+        .build();
+    
+    let key_controller = gtk::EventControllerKey::new();
+    let popup_clone = popup.clone();
+    key_controller.connect_key_pressed(move |_, _, _, _| {
+        popup_clone.close();
+        glib::Propagation::Stop
+    });
+    popup.add_controller(key_controller);
+
+    popup.present();
+}
+
 #[derive(Clone)]
 struct SelectionInfo {
     file_info: gio::FileInfo,
@@ -328,7 +408,7 @@ struct SelectionInfo {
 #[derive(Clone)]
 struct ColumnEntry {
     container: gtk::Widget,
-    focus_target: gtk::Widget, // The ListView or the Preview container
+    focus_target: gtk::Widget,
 }
 
 #[derive(Clone)]
@@ -378,13 +458,11 @@ impl ColumnManager {
         let manager_clone = self.clone();
         let window_clone = window.clone();
         
-        // Handle closing via the 'X' button
         window.connect_close_request(move |_| {
             *manager_clone.preview_window.borrow_mut() = None;
             glib::Propagation::Proceed
         });
 
-        // Key navigation inside preview window
         let key_controller = gtk::EventControllerKey::new();
         let manager_key_clone = self.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
@@ -394,7 +472,6 @@ impl ColumnManager {
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::Up | gtk::gdk::Key::Down => {
-                    // Find the focused list view and move selection
                     if let Some(lv) = manager_key_clone.get_focused_list_view() {
                         let selection_model = lv.model().unwrap().downcast::<gtk::SingleSelection>().unwrap();
                         let current = selection_model.selected();
@@ -462,7 +539,6 @@ impl ColumnManager {
                 let mut new_path = path_clone.clone();
                 new_path.push(name);
 
-                // Update current selection for Space preview
                 *self_clone.current_selection.borrow_mut() = Some(SelectionInfo {
                     file_info: file_info.clone(),
                     path: new_path.clone(),
@@ -490,7 +566,6 @@ impl ColumnManager {
             }
         });
 
-        // Add Key Navigation
         let key_controller = gtk::EventControllerKey::new();
         let self_key_clone = self.clone();
         let list_view_focus = list_view.clone();
