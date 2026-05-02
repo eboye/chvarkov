@@ -529,6 +529,14 @@ fn build_ui(app: &Application) {
             glib::idle_add_local(move || {
                 let path = path.clone();
                 manager_clone.add_column(path, 0);
+                // Also trigger an app-level refresh if in Icons mode
+                let settings = gio::Settings::new("com.example.ArchFinder");
+                let view_type: String = settings.get("view-type");
+                if view_type == "icons" {
+                    if let Some(app) = gio::Application::default() {
+                        app.activate();
+                    }
+                }
                 glib::ControlFlow::Break
             });
         });
@@ -593,6 +601,28 @@ fn build_ui(app: &Application) {
         window.set_content(Some(&root_layout));
         window.present();
     }
+}
+
+fn show_preview_popup(parent: &ApplicationWindow, selection: &SelectionInfo) {
+    let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+    
+    let popup = adw::Window::builder()
+        .transient_for(parent)
+        .default_width(800)
+        .default_height(600)
+        .modal(true)
+        .content(&preview_layout)
+        .build();
+    
+    let key_controller = gtk::EventControllerKey::new();
+    let popup_clone = popup.clone();
+    key_controller.connect_key_pressed(move |_, _, _, _| {
+        popup_clone.close();
+        glib::Propagation::Stop
+    });
+    popup.add_controller(key_controller);
+
+    popup.present();
 }
 
 #[derive(Clone)]
