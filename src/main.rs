@@ -573,6 +573,12 @@ fn build_ui(app: &Application) {
 
     scrolled_window.set_child(Some(&columns_box));
 
+    // Align horizontal scroll to the right during resize
+    let adj = scrolled_window.hadjustment();
+    adj.connect_upper_notify(|adj| {
+        adj.set_value(adj.upper() - adj.page_size());
+    });
+
     let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level, sort_type));
     ACTIVE_MANAGER.with(|m| *m.borrow_mut() = Some(manager.clone()));
 
