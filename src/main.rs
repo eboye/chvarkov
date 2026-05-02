@@ -189,6 +189,7 @@ fn setup_actions(app: &Application) {
         }
     });
     app.add_action(&show_hidden_action);
+    app.set_accels_for_action("app.show-hidden", &["<Control>h"]);
 
     let show_meta_action = gio::SimpleAction::new_stateful("show-meta", None, &false.to_variant());
     let app_weak_m = app.downgrade();
@@ -201,6 +202,7 @@ fn setup_actions(app: &Application) {
         }
     });
     app.add_action(&show_meta_action);
+    app.set_accels_for_action("app.show-meta", &["<Control>m"]);
 
     let view_type_action = gio::SimpleAction::new_stateful("view-type", Some(glib::VariantTy::new("s").unwrap()), &"miller".to_variant());
     let app_weak_v = app.downgrade();

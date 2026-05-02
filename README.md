@@ -18,6 +18,8 @@
 | Action | Shortcut |
 | :--- | :--- |
 | **Quit Application** | `Ctrl` + `Q` |
+| **Toggle Hidden Files** | `Ctrl` + `H` |
+| **Toggle Metadata** | `Ctrl` + `M` |
 | **Open File/Folder** | `Return` (Enter) |
 | **Copy** | `Ctrl` + `C` |
 | **Cut** | `Ctrl` + `X` |
