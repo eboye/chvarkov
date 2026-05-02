@@ -26,6 +26,7 @@ impl Sidebar {
         let title_header = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .margin_start(16)
+            .css_classes(["sidebar-title-area"])
             .build();
 
         let title_label = gtk::Label::builder()
@@ -34,6 +35,11 @@ impl Sidebar {
             .valign(gtk::Align::Center)
             .css_classes(["title-4"])
             .build();
+        
+        let attrs = gtk::pango::AttrList::new();
+        let font_attr = gtk::pango::AttrInt::new_weight(gtk::pango::Weight::Bold);
+        attrs.insert(font_attr);
+        title_label.set_attributes(Some(&attrs));
         
         title_header.append(&title_label);
         container.append(&title_header);

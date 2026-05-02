@@ -82,6 +82,10 @@ fn setup_styles() {
             border-right: 1px solid alpha(@borders, 0.3);
         }
 
+        .sidebar-title-area {
+            border-bottom: 1px solid alpha(@borders, 0.3);
+        }
+
         /* Sidebar active highlighting */
         row.sidebar-active {
             background-color: @accent_bg_color;
@@ -574,6 +578,7 @@ fn build_ui(app: &Application) {
         .build();
 
     let header_bar = HeaderBar::builder()
+        .title_widget(&gtk::Box::new(Orientation::Horizontal, 0))
         .build();
 
     let toggle_sidebar_btn = gtk::ToggleButton::builder()
