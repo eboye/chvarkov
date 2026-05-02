@@ -60,6 +60,18 @@ fn setup_actions(app: &Application) {
     });
     app.add_action(&show_hidden_action);
 
+    let show_meta_action = gio::SimpleAction::new_stateful("show-meta", None, &false.to_variant());
+    let app_weak_m = app.downgrade();
+    show_meta_action.connect_change_state(move |action, state| {
+        if let Some(state) = state {
+            action.set_state(state);
+            if let Some(app) = app_weak_m.upgrade() {
+                app.activate();
+            }
+        }
+    });
+    app.add_action(&show_meta_action);
+
     let view_type_action = gio::SimpleAction::new_stateful("view-type", Some(glib::VariantTy::new("s").unwrap()), &"miller".to_variant());
     let app_weak_v = app.downgrade();
     view_type_action.connect_change_state(move |action, state| {
@@ -92,13 +104,33 @@ fn build_ui(app: &Application) {
         .title_widget(&adw::WindowTitle::new("Arch-Finder", ""))
         .build();
 
+    // Group 1: Display Toggles (Linked)
+    let display_group = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .css_classes(["linked"])
+        .build();
+
     let show_hidden_btn = gtk::ToggleButton::builder()
         .icon_name("view-conceal-symbolic")
         .tooltip_text("Show Hidden Files")
         .action_name("app.show-hidden")
         .build();
-    header_bar.pack_start(&show_hidden_btn);
+    display_group.append(&show_hidden_btn);
 
+    let show_meta_btn = gtk::ToggleButton::builder()
+        .icon_name("view-list-bullet-symbolic")
+        .tooltip_text("Toggle Metadata")
+        .action_name("app.show-meta")
+        .build();
+    display_group.append(&show_meta_btn);
+
+    header_bar.pack_start(&display_group);
+
+    // Separator
+    let separator = gtk::Separator::new(Orientation::Vertical);
+    header_bar.pack_start(&separator);
+
+    // Group 2: View Options
     let view_menu = gio::Menu::new();
     view_menu.append(Some("Miller Columns"), Some("app.view-type::miller"));
     view_menu.append(Some("Icons View"), Some("app.view-type::icons"));
@@ -138,7 +170,12 @@ fn build_ui(app: &Application) {
             .map(|a| a.state().unwrap().get::<bool>().unwrap())
             .unwrap_or(false);
 
-        let manager = ColumnManager::new(columns_box, show_hidden);
+        let show_meta = app.lookup_action("show-meta")
+            .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
+            .map(|a| a.state().unwrap().get::<bool>().unwrap())
+            .unwrap_or(false);
+
+        let manager = ColumnManager::new(columns_box, show_hidden, show_meta);
         manager.add_column(glib::home_dir(), 0);
     } else {
         let label = gtk::Label::new(Some(&format!("{} view is not yet implemented", view_type)));
@@ -154,20 +191,22 @@ fn build_ui(app: &Application) {
 struct ColumnManager {
     columns_box: Box,
     show_hidden: bool,
+    show_meta: bool,
     widgets: Rc<RefCell<Vec<gtk::Widget>>>,
 }
 
 impl ColumnManager {
-    fn new(columns_box: Box, show_hidden: bool) -> Self {
+    fn new(columns_box: Box, show_hidden: bool, show_meta: bool) -> Self {
         Self {
             columns_box,
             show_hidden,
+            show_meta,
             widgets: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
     fn add_column(&self, path: PathBuf, index: usize) {
-        let column = Column::new(&path, self.show_hidden);
+        let column = Column::new(&path, self.show_hidden, self.show_meta);
         let column_widget = column.widget.clone().upcast::<gtk::Widget>();
         
         {
