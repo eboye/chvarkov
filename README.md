@@ -35,9 +35,33 @@
 
 ## 🚀 Installation
 
-### 1. Install Dependencies
+### Option A — AppImage (no dependencies, runs anywhere)
 
-Before running the pre-built binary or building from source, ensure your system has the required libraries installed:
+Download `chvarkov-linux-amd64.AppImage` from the [Releases Page](https://github.com/eboye/chvarkov/releases), then:
+
+```bash
+chmod +x chvarkov-linux-amd64.AppImage
+./chvarkov-linux-amd64.AppImage
+```
+
+All GTK4/Adwaita/GtkSourceView libraries are bundled inside the AppImage.
+
+---
+
+### Option B — Flatpak
+
+Download `chvarkov-linux-amd64.flatpak` from the [Releases Page](https://github.com/eboye/chvarkov/releases), then:
+
+```bash
+flatpak install --user chvarkov-linux-amd64.flatpak
+flatpak run net.nocopypaste.chvarkov
+```
+
+---
+
+### Option C — Binary tarball
+
+Requires GTK4, Libadwaita and GtkSourceView 5 to be installed on your system:
 
 #### **Arch Linux**
 ```bash
@@ -51,50 +75,56 @@ sudo dnf install gtk4 libadwaita gtksourceview5
 
 #### **Debian / Ubuntu**
 ```bash
-sudo apt update
 sudo apt install libgtk-4-1 libadwaita-1-0 libgtksourceview-5-0
 ```
 
-### 2. Download and Run
+Then download `chvarkov-linux-amd64.tar.gz`, extract and run:
 
-1.  Download the latest release from the [Releases Page](https://github.com/eboye/chvarkov/releases).
-2.  Extract the archive:
-    ```bash
-    tar -xzf chvarkov-linux-amd64.tar.gz
-    ```
-3.  Run the application:
-    ```bash
-    ./chvarkov
-    ```
+```bash
+tar -xzf chvarkov-linux-amd64.tar.gz
+./chvarkov
+```
 
 ---
 
 ## 🛠 Building from Source
 
-If you prefer to build chvarkov yourself, follow these steps:
-
 ### Prerequisites
 
-You will need the Rust toolchain and development headers for the dependencies:
-
 - **Rust:** [Install Rust](https://www.rust-lang.org/tools/install)
-- **Development Headers:**
+- **Development headers:**
+  - **Arch Linux:** `sudo pacman -S gtk4 libadwaita gtksourceview5`
   - **Fedora:** `sudo dnf install gtk4-devel libadwaita-devel gtksourceview5-devel`
   - **Ubuntu/Debian:** `sudo apt install libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev`
-  - **Arch Linux:** `sudo pacman -S gtk4 libadwaita gtksourceview5`
 
-### Build Steps
+### Install system-wide (no sudo — goes to `~/.local`)
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/eboye/chvarkov.git
-   cd chvarkov
-   ```
+```bash
+git clone https://github.com/eboye/chvarkov.git
+cd chvarkov
+cargo xtask install
+```
 
-2. Build and run:
-   ```bash
-   cargo run --release
-   ```
+This builds the binary, installs it to `~/.local/bin/chvarkov`, registers the GSettings schema, `.desktop` entry and icon. Make sure `~/.local/bin` is in your `$PATH`.
+
+To install to `/usr/local` instead (requires sudo):
+
+```bash
+sudo cargo xtask install --system
+```
+
+To uninstall:
+
+```bash
+cargo xtask uninstall          # from ~/.local
+sudo cargo xtask uninstall --system
+```
+
+### Build and run without installing
+
+```bash
+cargo run --release
+```
 
 ## 🛠 Development
 

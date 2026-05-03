@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>net.nocopypaste.chvarkov</id>
+  <name>Chvarkov</name>
+  <summary>Modern Miller Columns file manager for GNOME</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      Chvarkov is a modern, high-performance file manager designed for the GNOME desktop.
+      It brings the efficiency of macOS-style Miller Columns to Linux, built from the ground
+      up using Rust, GTK4, and Libadwaita.
+    </p>
+    <ul>
+      <li>Miller Columns navigation for deep directory traversal</li>
+      <li>Live file previews with metadata</li>
+      <li>Icon view and list view modes</li>
+      <li>GNOME thumbnail support</li>
+      <li>Keyboard-first navigation</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">net.nocopypaste.chvarkov.desktop</launchable>
+  <url type="homepage">https://github.com/eboye/chvarkov</url>
+  <url type="bugtracker">https://github.com/eboye/chvarkov/issues</url>
+  <provides>
+    <binary>chvarkov</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2025-01-01">
+      <description><p>Initial release.</p></description>
+    </release>
+  </releases>
+</component>

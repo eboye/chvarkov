@@ -4,45 +4,193 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: # Allows manual triggering from the Actions tab
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: Build and Release
+  # ── 1. Binary tarball ────────────────────────────────────────────────────────
+  binary:
+    name: Build binary tarball
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-4-dev \
             libadwaita-1-dev \
             libgtksourceview-5-dev \
+            libglib2.0-dev \
             pkg-config \
             build-essential
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Build release
+      - name: Build release binary
         run: cargo build --release
 
-      - name: Package Binary
+      - name: Compile GSettings schema
         run: |
-          mkdir -p release
-          cp target/release/chvarkov release/chvarkov
-          tar -czf chvarkov-linux-amd64.tar.gz -C release chvarkov
+          mkdir -p release/compiled_schemas
+          cp net.nocopypaste.chvarkov.gschema.xml release/compiled_schemas/
+          glib-compile-schemas release/compiled_schemas/
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Package tarball
+        run: |
+          cp target/release/chvarkov release/chvarkov
+          cp data/net.nocopypaste.chvarkov.desktop release/
+          cp data/net.nocopypaste.chvarkov.svg release/
+          cp data/net.nocopypaste.chvarkov.metainfo.xml release/
+          tar -czf chvarkov-linux-amd64.tar.gz \
+            -C release \
+            chvarkov \
+            compiled_schemas \
+            net.nocopypaste.chvarkov.desktop \
+            net.nocopypaste.chvarkov.svg \
+            net.nocopypaste.chvarkov.metainfo.xml
+
+      - uses: actions/upload-artifact@v4
         with:
-          files: chvarkov-linux-amd64.tar.gz
+          name: binary-tarball
+          path: chvarkov-linux-amd64.tar.gz
+
+  # ── 2. AppImage ──────────────────────────────────────────────────────────────
+  appimage:
+    name: Build AppImage
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libgtksourceview-5-dev \
+            libglib2.0-dev \
+            pkg-config \
+            build-essential \
+            libfuse2 \
+            desktop-file-utils \
+            libgdk-pixbuf2.0-dev \
+            librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Download linuxdeploy + GTK plugin
+        run: |
+          wget -qO linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -qO linuxdeploy-plugin-gtk.sh \
+            https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+          chmod +x linuxdeploy.AppImage linuxdeploy-plugin-gtk.sh
+
+      - name: Assemble AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/glib-2.0/schemas
+          cp target/release/chvarkov AppDir/usr/bin/chvarkov
+          cp net.nocopypaste.chvarkov.gschema.xml AppDir/usr/share/glib-2.0/schemas/
+          glib-compile-schemas AppDir/usr/share/glib-2.0/schemas/
+          install -Dm644 data/net.nocopypaste.chvarkov.desktop \
+            AppDir/usr/share/applications/net.nocopypaste.chvarkov.desktop
+          install -Dm644 data/net.nocopypaste.chvarkov.svg \
+            AppDir/usr/share/icons/hicolor/scalable/apps/net.nocopypaste.chvarkov.svg
+          install -Dm644 data/net.nocopypaste.chvarkov.metainfo.xml \
+            AppDir/usr/share/metainfo/net.nocopypaste.chvarkov.metainfo.xml
+
+      - name: Build AppImage
+        env:
+          DEPLOY_GTK_VERSION: 4
+        run: |
+          ./linuxdeploy.AppImage \
+            --appdir AppDir \
+            --plugin gtk \
+            --output appimage
+          mv chvarkov-*.AppImage chvarkov-linux-amd64.AppImage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: chvarkov-linux-amd64.AppImage
+
+  # ── 3. Flatpak ───────────────────────────────────────────────────────────────
+  flatpak:
+    name: Build Flatpak bundle
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:gnome-47
+      options: --privileged
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Cargo vendor sources
+        run: |
+          cargo vendor vendor
+          # Produce the generated-sources.json that flatpak-builder needs
+          python3 - <<'EOF'
+          import json, os, hashlib, subprocess
+
+          sources = []
+          for dep_dir in os.listdir("vendor"):
+              dep_path = os.path.join("vendor", dep_dir)
+              if not os.path.isdir(dep_path):
+                  continue
+              sources.append({
+                  "type": "dir",
+                  "path": dep_path,
+                  "dest": f"vendor/{dep_dir}"
+              })
+
+          with open("generated-sources.json", "w") as f:
+              json.dump(sources, f, indent=2)
+          print(f"Generated {len(sources)} vendor sources")
+          EOF
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: chvarkov-linux-amd64.flatpak
+          manifest-path: net.nocopypaste.chvarkov.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: chvarkov-linux-amd64.flatpak
+
+  # ── 4. GitHub Release ────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [binary, appimage, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            chvarkov-linux-amd64.tar.gz
+            chvarkov-linux-amd64.AppImage
+            chvarkov-linux-amd64.flatpak
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

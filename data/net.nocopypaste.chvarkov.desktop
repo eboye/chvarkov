@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Chvarkov
+GenericName=File Manager
+Comment=Modern Miller Columns file manager for GNOME
+Exec=chvarkov %u
+Icon=net.nocopypaste.chvarkov
+Terminal=false
+Type=Application
+Categories=System;FileManager;GTK;
+MimeType=inode/directory;
+Keywords=file;manager;columns;miller;
+StartupNotify=true
+StartupWMClass=chvarkov

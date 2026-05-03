@@ -26,8 +26,16 @@ thread_local! {
 
 fn main() {
     // For development, point GSETTINGS_SCHEMA_DIR to our compiled schemas
-    unsafe {
-        std::env::set_var("GSETTINGS_SCHEMA_DIR", "./compiled_schemas");
+    // Resolve relative to the binary location so it works regardless of CWD
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let schema_dir = exe_dir.join("compiled_schemas");
+            if schema_dir.exists() {
+                unsafe {
+                    std::env::set_var("GSETTINGS_SCHEMA_DIR", &schema_dir);
+                }
+            }
+        }
     }
 
     let application = Application::builder()
@@ -76,7 +84,7 @@ fn setup_styles() {
             background-color: @accent_bg_color;
             min-width: 2px;
         }
-        
+
         .navigation-sidebar {
             background-color: @window_bg_color;
             border-right: 1px solid alpha(@borders, 0.3);
@@ -90,7 +98,7 @@ fn setup_styles() {
             box-sizing: border-box;
             padding: 0 !important;
             margin: 0 !important;
-            min-height: 46px; 
+            min-height: 46px;
             max-height: 46px;
         }
 
@@ -101,7 +109,7 @@ fn setup_styles() {
             padding: 0;
             min-height: 46px; /* Match area height exactly */
         }
-        
+
         .sidebar-footer-area, .breadcrumb-container-scrolled {
             background-color: @window_bg_color;
             border-top: 1px solid alpha(@borders, 0.3);
@@ -198,13 +206,13 @@ fn setup_actions(app: &Application) {
                 if let Some(selection) = manager.current_selection.borrow().as_ref() {
                     let file_info = &selection.file_info;
                     let path = &selection.path;
-                    
+
                     let is_dir = file_info.file_type() == gio::FileType::Directory || path.is_dir();
-                    
+
                     if is_dir {
                         let settings = gio::Settings::new("net.nocopypaste.chvarkov");
                         let _ = settings.set_string("current-path", &path.to_string_lossy());
-                        
+
                         if let Some(app) = gio::Application::default() {
                              glib::idle_add_local(move || {
                                  app.activate();
@@ -569,7 +577,7 @@ fn show_preferences_window(app: &Application) {
         .build();
     default_path_row.add_suffix(&path_label);
     default_path_row.add_suffix(&pick_button);
-    
+
     let settings_path = settings.clone();
     let pref_window_weak = pref_window.downgrade();
     pick_button.connect_clicked(move |_| {
@@ -577,7 +585,7 @@ fn show_preferences_window(app: &Application) {
             let dialog = gtk::FileDialog::builder()
                 .title("Select Default Startup Directory")
                 .build();
-            
+
             let settings_c = settings_path.clone();
             let label_c = path_label.clone();
             dialog.select_folder(Some(&pref_window), gio::Cancellable::NONE, move |res| {
@@ -598,13 +606,13 @@ fn show_preferences_window(app: &Application) {
         .active(settings.boolean("folders-first"))
         .valign(gtk::Align::Center)
         .build();
-    
+
     let folders_first_row = adw::ActionRow::builder()
         .title("List Folders First")
         .activatable_widget(&folders_first_switch)
         .build();
     folders_first_row.add_suffix(&folders_first_switch);
-    
+
     let settings_folders = settings.clone();
     folders_first_switch.connect_active_notify(move |sw| {
         let _ = settings_folders.set_boolean("folders-first", sw.is_active());
@@ -627,7 +635,7 @@ fn build_ui(app: &Application) {
             .default_height(800)
             .build()
     };
-    
+
     window.set_title(None);
 
     let split_view = OverlaySplitView::builder()
@@ -641,7 +649,7 @@ fn build_ui(app: &Application) {
         600.0,
         adw::LengthUnit::Px,
     ));
-    
+
     breakpoint.add_setter(&split_view, "collapsed", Some(&true.to_value()));
     window.add_breakpoint(breakpoint);
 
@@ -712,7 +720,7 @@ fn build_ui(app: &Application) {
         "list" => "view-list-symbolic",
         _ => "view-column-symbolic",
     };
-    
+
     let view_label_text = match view_type.as_str() {
         "icons" => "Icons",
         "list" => "List",
@@ -792,13 +800,13 @@ fn build_ui(app: &Application) {
     main_content.append(&header_bar);
 
     let toast_overlay = ToastOverlay::new();
-    
+
     let settings = gio::Settings::new("net.nocopypaste.chvarkov");
-    
+
     // Responsive labels logic
     let view_label_weak = view_btn_label.downgrade();
     let sort_label_weak = sort_btn_label.downgrade();
-    
+
     // Poll for width changes as a robust workaround in GTK4
     let win_weak = window.downgrade();
     glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
@@ -812,7 +820,7 @@ fn build_ui(app: &Application) {
             glib::ControlFlow::Break
         }
     });
-    
+
     // Initial check
     let initial_width = window.width();
     view_btn_label.set_visible(initial_width > 900);
@@ -879,7 +887,7 @@ fn build_ui(app: &Application) {
         .margin_start(12)
         .margin_end(12)
         .build();
-    
+
     let breadcrumb_scrolled = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vscrollbar_policy(gtk::PolicyType::Never)
@@ -887,7 +895,7 @@ fn build_ui(app: &Application) {
         .visible(false)
         .css_classes(["breadcrumb-container-scrolled"])
         .build();
-    
+
     manager.set_breadcrumb_container(breadcrumb_bar.clone(), breadcrumb_scrolled.clone());
 
     let current_path_str: String = settings.get("current-path");
@@ -901,7 +909,7 @@ fn build_ui(app: &Application) {
     };
 
     let sidebar = Sidebar::new();
-    
+
     // Sync Sidebar Title height with main HeaderBar exactly
     let size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
     size_group.add_widget(&header_bar);
@@ -914,7 +922,7 @@ fn build_ui(app: &Application) {
 
     split_view.set_sidebar(Some(&sidebar.widget));
     split_view.set_show_sidebar(show_sidebar);
-    
+
     let manager_sidebar_clone = manager.clone();
     let split_view_row_clone = split_view.clone();
     sidebar.list_box.connect_row_activated(move |list_box, list_row| {
@@ -979,7 +987,7 @@ fn build_ui(app: &Application) {
         }
     } else if view_type == "icons" {
         let icon_view = IconView::new(&initial_path, show_hidden, show_meta, zoom_level, &manager.sort_type, folders_first);
-        
+
         let manager_icon_clone = manager.clone();
         let path_icon_clone = initial_path.clone();
         icon_view.grid_view.model().unwrap().connect_selection_changed(move |selection_model, _, _| {
@@ -993,7 +1001,7 @@ fn build_ui(app: &Application) {
         manager.set_main_view(icon_view.grid_view.clone().upcast::<gtk::Widget>());
     } else if view_type == "list" {
         let list_view_widget = ListView::new(&initial_path, show_hidden, show_meta, zoom_level, &manager.sort_type, folders_first);
-        
+
         let manager_list_clone = manager.clone();
         let path_list_clone = initial_path.clone();
         list_view_widget.column_view.model().unwrap().connect_selection_changed(move |selection_model, _, _| {
@@ -1012,10 +1020,10 @@ fn build_ui(app: &Application) {
     }
 
     main_content.append(&breadcrumb_scrolled);
-    
+
     toast_overlay.set_child(Some(&main_content));
     split_view.set_content(Some(&toast_overlay));
-    
+
     window.set_content(Some(&split_view));
     window.present();
 }
@@ -1195,14 +1203,14 @@ impl ColumnManager {
                     .label(name)
                     .has_frame(false)
                     .build();
-                
+
                 let p_clone = p.clone();
                 let manager_clone = self.clone();
                 btn.connect_clicked(move |_| {
                     let path = p_clone.clone();
                     let settings = gio::Settings::new("net.nocopypaste.chvarkov");
                     let _ = settings.set_string("current-path", &path.to_string_lossy());
-                    
+
                     let view_type: String = settings.get("view-type");
                     if view_type == "icons" || view_type == "list" {
                         if let Some(app) = gio::Application::default() {
@@ -1230,7 +1238,7 @@ impl ColumnManager {
 
     fn create_preview_window(&self, parent: &ApplicationWindow, selection: &SelectionInfo) -> adw::Window {
         let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-        
+
         let window = adw::Window::builder()
             .transient_for(parent)
             .default_width(800)
@@ -1238,10 +1246,10 @@ impl ColumnManager {
             .modal(true)
             .content(&preview_layout)
             .build();
-        
+
         let manager_clone = self.clone();
         let window_clone = window.clone();
-        
+
         window.connect_close_request(move |_| {
             *manager_clone.preview_window.borrow_mut() = None;
             glib::Propagation::Proceed
@@ -1316,10 +1324,10 @@ impl ColumnManager {
         let column = Column::new(&path, self.show_hidden, self.show_meta, self.zoom_level, &self.sort_type, self.folders_first);
         let column_widget = column.widget.clone().upcast::<gtk::Widget>();
         let list_view = column.list_view.clone();
-        
+
         {
             let mut entries = self.entries.borrow_mut();
-            
+
             while entries.len() > index {
                 let entry = entries.pop().unwrap();
                 self.columns_box.remove(&entry.container);
@@ -1359,7 +1367,7 @@ impl ColumnManager {
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Right {
                 let selection_model = list_view_focus.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                
+
                 if selection_model.selection().is_empty() {
                     selection_model.select_item(0, true);
                     return glib::Propagation::Stop;
@@ -1372,7 +1380,7 @@ impl ColumnManager {
                     list_view_focus.remove_css_class("focused-column");
                     let target_entry = &entries[index + 1];
                     let target = &target_entry.focus_target;
-                    
+
                     if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
                         let sel = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
                         if sel.selection().is_empty() {
@@ -1397,7 +1405,7 @@ impl ColumnManager {
                         let sel = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
                         self_key_clone.handle_selection_change_multi(&sel, &target_entry.path, index - 1);
                     }
-                    
+
                     return glib::Propagation::Stop;
                 }
             }
@@ -1414,14 +1422,14 @@ impl ColumnManager {
             println!("Selection cleared in Column {}", index);
             *self.current_selection.borrow_mut() = None;
             self.update_breadcrumbs(base_path);
-            
+
             // Clear subsequent columns
             let mut entries = self.entries.borrow_mut();
             while entries.len() > index + 1 {
                 let entry = entries.pop().unwrap();
                 self.columns_box.remove(&entry.container);
             }
-            
+
             self.update_preview_if_open();
             return;
         }
@@ -1429,7 +1437,7 @@ impl ColumnManager {
         // For previews and navigation, we use the first selected item
         let first_idx = selection.minimum();
         let selected_item = selection_model.model().unwrap().item(first_idx);
-        
+
         if let Some(item) = selected_item {
             // Handle TreeListRow wrapping if it's a List View
             let file_info = if let Ok(tree_row) = item.clone().downcast::<gtk::TreeListRow>() {
@@ -1442,21 +1450,21 @@ impl ColumnManager {
             let mut new_path = base_path.clone();
             new_path.push(&name);
 
-            println!("Selection [Column {}]: {:?} | Type: {:?} | FS is_dir: {}", 
+            println!("Selection [Column {}]: {:?} | Type: {:?} | FS is_dir: {}",
                      index, new_path, file_info.file_type(), new_path.is_dir());
 
             *self.current_selection.borrow_mut() = Some(SelectionInfo {
                 file_info: file_info.clone(),
                 path: new_path.clone(),
             });
-            
+
             self.update_breadcrumbs(&new_path);
             self.update_preview_if_open();
 
             // In List View, we don't necessarily want to jump columns unless it's Miller
             let settings = gio::Settings::new("net.nocopypaste.chvarkov");
             let view_type: String = settings.get("view-type");
-            
+
             if view_type == "miller" {
                 if file_info.file_type() == gio::FileType::Directory || new_path.is_dir() {
                     self.add_column(new_path, index + 1);

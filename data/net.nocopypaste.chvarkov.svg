@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Background folder shape -->
+  <rect x="8" y="32" width="112" height="80" rx="12" ry="12" fill="#3584e4"/>
+  <path d="M8 52 Q8 32 28 32 L52 32 L60 44 L120 44 Q120 44 120 52 Z" fill="#4a9df5"/>
+  <!-- Miller columns lines -->
+  <line x1="44" y1="56" x2="44" y2="100" stroke="white" stroke-width="2" stroke-opacity="0.6"/>
+  <line x1="80" y1="56" x2="80" y2="100" stroke="white" stroke-width="2" stroke-opacity="0.6"/>
+  <!-- Column entries -->
+  <rect x="16" y="62" width="20" height="4" rx="2" fill="white" fill-opacity="0.9"/>
+  <rect x="16" y="72" width="20" height="4" rx="2" fill="white" fill-opacity="0.5"/>
+  <rect x="16" y="82" width="16" height="4" rx="2" fill="white" fill-opacity="0.5"/>
+  <rect x="52" y="62" width="20" height="4" rx="2" fill="white" fill-opacity="0.9"/>
+  <rect x="52" y="72" width="16" height="4" rx="2" fill="white" fill-opacity="0.5"/>
+  <rect x="88" y="62" width="20" height="4" rx="2" fill="white" fill-opacity="0.9"/>
+  <rect x="88" y="72" width="14" height="4" rx="2" fill="white" fill-opacity="0.5"/>
+  <!-- Selected row highlight -->
+  <rect x="14" y="59" width="24" height="10" rx="3" fill="white" fill-opacity="0.2"/>
+  <rect x="50" y="59" width="24" height="10" rx="3" fill="white" fill-opacity="0.2"/>
+</svg>

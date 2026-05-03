@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "xtask"]
+default-members = ["."]
+
 [package]
 name = "chvarkov"
 version = "0.1.0"
