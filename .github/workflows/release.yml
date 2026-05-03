@@ -115,6 +115,8 @@ jobs:
             mkdir -p AppDir/usr/share/metainfo
 
             cp target/release/chvarkov AppDir/usr/bin/chvarkov
+            cp AppRun AppDir/AppRun
+            chmod +x AppDir/AppRun
             cp net.nocopypaste.chvarkov.gschema.xml AppDir/usr/share/glib-2.0/schemas/
             glib-compile-schemas AppDir/usr/share/glib-2.0/schemas/
             cp data/net.nocopypaste.chvarkov.desktop AppDir/usr/share/applications/
