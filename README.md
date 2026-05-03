@@ -10,14 +10,17 @@
 - **Native Resizing:** Smoothly resize any column or preview pane using native GTK handles.
 - **Live Previews:** Instantly view file details, metadata, and large icons when a file is selected.
 - **Modern GNOME UI:** Adheres to the latest GNOME Human Interface Guidelines (HIG) with a clean Libadwaita interface.
-- **Metadata Toggle:** Quickly switch between a compact view and a detailed view showing "Last Modified" dates.
-- **Hidden Files Toggle:** Easily hide or show dotfiles with a single click.
+- **Adaptive Sidebar:** Automatically collapses into an overlay on smaller screens.
+- **GNOME Thumbnails:** Native support for file thumbnails in all view types.
+- **Keyboard First:** Fully navigable via keyboard with standard shortcuts.
 
 ## ⌨️ Keyboard Shortcuts
 
 | Action | Shortcut |
 | :--- | :--- |
 | **Quit Application** | `Ctrl` + `Q` |
+| **Quick Look Preview** | `Space` |
+| **Toggle Sidebar** | `F9` |
 | **Toggle Hidden Files** | `Ctrl` + `H` |
 | **Toggle Metadata** | `Ctrl` + `M` |
 | **Open File/Folder** | `Return` (Enter) |
@@ -30,36 +33,74 @@
 | **View Properties** | `Alt` + `Return` |
 | **Trigger Context Menu** | `Menu` key or `Shift` + `F10` |
 
-## 🚀 Getting Started
+## 🚀 Installation
+
+### 1. Install Dependencies
+
+Before running the pre-built binary or building from source, ensure your system has the required libraries installed:
+
+#### **Arch Linux**
+```bash
+sudo pacman -S gtk4 libadwaita gtksourceview5
+```
+
+#### **Fedora**
+```bash
+sudo dnf install gtk4 libadwaita gtksourceview5
+```
+
+#### **Debian / Ubuntu**
+```bash
+sudo apt update
+sudo apt install libgtk-4-1 libadwaita-1-0 libgtksourceview-5-0
+```
+
+### 2. Download and Run
+
+1.  Download the latest release from the [Releases Page](https://github.com/eboye/chvarkov/releases).
+2.  Extract the archive:
+    ```bash
+    tar -xzf chvarkov-linux-amd64.tar.gz
+    ```
+3.  Run the application:
+    ```bash
+    ./chvarkov
+    ```
+
+---
+
+## 🛠 Building from Source
+
+If you prefer to build chvarkov yourself, follow these steps:
 
 ### Prerequisites
 
-To build chvarkov, you need the Rust toolchain and the GTK4/Libadwaita development libraries:
+You will need the Rust toolchain and development headers for the dependencies:
 
 - **Rust:** [Install Rust](https://www.rust-lang.org/tools/install)
-- **GTK4 & Libadwaita:** 
-  - Fedora: `sudo dnf install gtk4-devel libadwaita-devel`
-  - Ubuntu/Debian: `sudo apt install libgtk-4-dev libadwaita-1-dev`
-  - Arch Linux: `sudo pacman -S gtk4 libadwaita`
+- **Development Headers:**
+  - **Fedora:** `sudo dnf install gtk4-devel libadwaita-devel gtksourceview5-devel`
+  - **Ubuntu/Debian:** `sudo apt install libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev`
+  - **Arch Linux:** `sudo pacman -S gtk4 libadwaita gtksourceview5`
 
-### Installation
+### Build Steps
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/arch-finder.git
-   cd arch-finder
+   git clone https://github.com/eboye/chvarkov.git
+   cd chvarkov
    ```
 
 2. Build and run:
    ```bash
-   cargo run
+   cargo run --release
    ```
 
 ## 🛠 Development
 
 ### Automatic Recompilation (Hot Reload)
 
-For a development experience similar to `npm watch`, we recommend using `cargo-watch`. It will automatically recompile and restart the app whenever you save a file.
+For a development experience similar to `npm watch`, we recommend using `cargo-watch`.
 
 1. Install `cargo-watch`:
    ```bash
@@ -70,17 +111,10 @@ For a development experience similar to `npm watch`, we recommend using `cargo-w
    ```bash
    cargo watch -c -x run
    ```
-   *The `-c` flag clears the terminal on each restart, and `-x run` executes the app.*
-
-### Project Structure
-
-- `src/main.rs`: Application shell, action handling, and column management logic.
-- `src/column.rs`: The directory list widget and resizer logic.
-- `src/preview.rs`: The file information and preview pane.
 
 ## 🤝 Contributing
 
-Contributions are welcome! Feel free to open issues or submit pull requests to improve the navigation, add new view types (Icons/List), or enhance file previews.
+Contributions are welcome! Feel free to open issues or submit pull requests.
 
 ## 📜 License
 
