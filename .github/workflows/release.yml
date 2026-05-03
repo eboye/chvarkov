@@ -163,32 +163,11 @@ jobs:
     name: Build Flatpak bundle
     runs-on: ubuntu-latest
     container:
-      image: bilelmoussaoui/flatpak-github-actions:gnome-nightly
+      image: bilelmoussaoui/flatpak-github-actions:gnome-47
       options: --privileged
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Vendor Cargo dependencies
-        run: |
-          cargo vendor vendor
-          # Write the vendored config so flatpak-builder's offline cargo build works
-          mkdir -p .cargo
-          cat > .cargo/config.toml <<'TOML'
-          [alias]
-          xtask = "run --package xtask --"
-
-          [source.crates-io]
-          replace-with = "vendored-sources"
-
-          [source.vendored-sources]
-          directory = "vendor"
-          TOML
 
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:

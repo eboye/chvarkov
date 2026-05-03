@@ -1,12 +1,7 @@
 app-id: net.nocopypaste.chvarkov
 runtime: org.gnome.Platform
-runtime-version: 'master'
+runtime-version: '47'
 sdk: org.gnome.Sdk
-sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rust-stable
-
-build-options:
-  append-path: /usr/lib/sdk/rust-stable/bin
 
 command: chvarkov
 
@@ -30,7 +25,8 @@ modules:
   - name: chvarkov
     buildsystem: simple
     build-commands:
-      - cargo --offline build --release --verbose
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+      - /root/.cargo/bin/cargo build --release --verbose
       - install -Dm755 target/release/chvarkov /app/bin/chvarkov
       - install -Dm644 data/net.nocopypaste.chvarkov.desktop /app/share/applications/net.nocopypaste.chvarkov.desktop
       - install -Dm644 data/net.nocopypaste.chvarkov.svg /app/share/icons/hicolor/scalable/apps/net.nocopypaste.chvarkov.svg
@@ -38,6 +34,8 @@ modules:
       - install -Dm644 net.nocopypaste.chvarkov.gschema.xml /app/share/glib-2.0/schemas/net.nocopypaste.chvarkov.gschema.xml
       - glib-compile-schemas /app/share/glib-2.0/schemas/
     build-options:
+      build-args:
+        - --share=network
       env:
         CARGO_HOME: /run/build/chvarkov/cargo
     sources:
