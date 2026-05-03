@@ -63,8 +63,8 @@ jobs:
           path: chvarkov-linux-amd64.tar.gz
 
   # ── 2. AppImage ──────────────────────────────────────────────────────────────
-  # Build the binary in a Fedora container, then assemble the AppImage on the
-  # Ubuntu host (linuxdeploy requires a traditional Linux userland).
+  # Build entirely inside Fedora 41 container so all GTK/Adwaita libs are
+  # available, then package with appimagetool.
   appimage:
     name: Build AppImage
     runs-on: ubuntu-latest
@@ -74,11 +74,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build binary inside Fedora 41 container
+      - name: Install FUSE on host (needed to run AppImages)
+        run: sudo apt-get update && sudo apt-get install -y libfuse2
+
+      - name: Build AppImage inside Fedora 41 container
         uses: addnab/docker-run-action@v3
         with:
           image: fedora:41
-          options: -v ${{ github.workspace }}:/workspace -w /workspace
+          options: -v ${{ github.workspace }}:/workspace -w /workspace --privileged
           run: |
             dnf install -y \
               gtk4-devel \
@@ -88,52 +91,50 @@ jobs:
               pkg-config \
               gcc \
               curl \
-              tar
+              wget \
+              fuse \
+              desktop-file-utils \
+              librsvg2 \
+              gdk-pixbuf2 \
+              patchelf
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
             source "$HOME/.cargo/env"
             cargo build --release
-            mkdir -p AppDir/usr/bin AppDir/usr/share/glib-2.0/schemas
+
+            # Download appimagetool
+            wget -qO /usr/local/bin/appimagetool \
+              https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+            chmod +x /usr/local/bin/appimagetool
+
+            # Assemble AppDir
+            mkdir -p AppDir/usr/bin
+            mkdir -p AppDir/usr/share/glib-2.0/schemas
+            mkdir -p AppDir/usr/share/applications
+            mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps
+            mkdir -p AppDir/usr/share/metainfo
+
             cp target/release/chvarkov AppDir/usr/bin/chvarkov
             cp net.nocopypaste.chvarkov.gschema.xml AppDir/usr/share/glib-2.0/schemas/
             glib-compile-schemas AppDir/usr/share/glib-2.0/schemas/
-            chmod -R 777 AppDir target/release/chvarkov
+            cp data/net.nocopypaste.chvarkov.desktop AppDir/usr/share/applications/
+            cp data/net.nocopypaste.chvarkov.svg AppDir/usr/share/icons/hicolor/scalable/apps/
+            cp data/net.nocopypaste.chvarkov.metainfo.xml AppDir/usr/share/metainfo/
 
-      - name: Install Ubuntu AppImage tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libfuse2 \
-            desktop-file-utils \
-            libgdk-pixbuf2.0-dev \
-            librsvg2-dev \
-            libglib2.0-dev
+            # AppImage requires a top-level .desktop and icon symlink
+            cp data/net.nocopypaste.chvarkov.desktop AppDir/
+            cp data/net.nocopypaste.chvarkov.svg AppDir/
+            ln -sf net.nocopypaste.chvarkov.svg AppDir/.DirIcon
 
-      - name: Download linuxdeploy + GTK plugin
-        run: |
-          wget -qO linuxdeploy.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -qO linuxdeploy-plugin-gtk.sh \
-            https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
-          chmod +x linuxdeploy.AppImage linuxdeploy-plugin-gtk.sh
+            # Bundle shared libraries
+            LIBS="libadwaita-1.so.0 libgtk-4.so.1 libgtksourceview-5.so.0"
+            for lib in $LIBS; do
+              src=$(ldconfig -p | grep "$lib " | awk '{print $NF}' | head -1)
+              [ -n "$src" ] && cp "$src" AppDir/usr/bin/
+            done
 
-      - name: Assemble AppDir metadata
-        run: |
-          install -Dm644 data/net.nocopypaste.chvarkov.desktop \
-            AppDir/usr/share/applications/net.nocopypaste.chvarkov.desktop
-          install -Dm644 data/net.nocopypaste.chvarkov.svg \
-            AppDir/usr/share/icons/hicolor/scalable/apps/net.nocopypaste.chvarkov.svg
-          install -Dm644 data/net.nocopypaste.chvarkov.metainfo.xml \
-            AppDir/usr/share/metainfo/net.nocopypaste.chvarkov.metainfo.xml
-
-      - name: Build AppImage
-        env:
-          DEPLOY_GTK_VERSION: 4
-        run: |
-          ./linuxdeploy.AppImage \
-            --appdir AppDir \
-            --plugin gtk \
-            --output appimage
-          mv chvarkov-*.AppImage chvarkov-linux-amd64.AppImage
+            # Build AppImage (extract first to run without FUSE in container)
+            /usr/local/bin/appimagetool --appimage-extract-and-run AppDir chvarkov-linux-amd64.AppImage
+            chmod -R 777 chvarkov-linux-amd64.AppImage
 
       - uses: actions/upload-artifact@v4
         with:
@@ -145,7 +146,7 @@ jobs:
     name: Build Flatpak bundle
     runs-on: ubuntu-latest
     container:
-      image: bilelmoussaoui/flatpak-github-actions:gnome-48
+      image: bilelmoussaoui/flatpak-github-actions:gnome-nightly
       options: --privileged
 
     steps:

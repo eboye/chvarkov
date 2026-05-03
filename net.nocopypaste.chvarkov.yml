@@ -1,6 +1,6 @@
 app-id: net.nocopypaste.chvarkov
 runtime: org.gnome.Platform
-runtime-version: '48'
+runtime-version: 'master'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
