@@ -10,27 +10,26 @@ jobs:
   # ── 1. Binary tarball ────────────────────────────────────────────────────────
   binary:
     name: Build binary tarball
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:41
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Add GNOME nightly PPA (provides libadwaita >= 1.6)
-        run: |
-          sudo add-apt-repository -y ppa:gnome-team/gnome-nightly
-          sudo apt-get update
-
       - name: Install system dependencies
         run: |
-          sudo apt-get install -y \
-            libgtk-4-dev \
-            libadwaita-1-dev \
-            libgtksourceview-5-dev \
-            libglib2.0-dev \
+          dnf install -y \
+            gtk4-devel \
+            libadwaita-devel \
+            gtksourceview5-devel \
+            glib2-devel \
             pkg-config \
-            build-essential
+            gcc \
+            curl \
+            tar
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -64,39 +63,49 @@ jobs:
           path: chvarkov-linux-amd64.tar.gz
 
   # ── 2. AppImage ──────────────────────────────────────────────────────────────
+  # Build the binary in a Fedora container, then assemble the AppImage on the
+  # Ubuntu host (linuxdeploy requires a traditional Linux userland).
   appimage:
     name: Build AppImage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Add GNOME nightly PPA (provides libadwaita >= 1.6)
-        run: |
-          sudo add-apt-repository -y ppa:gnome-team/gnome-nightly
-          sudo apt-get update
+      - name: Build binary inside Fedora 41 container
+        uses: addnab/docker-run-action@v3
+        with:
+          image: fedora:41
+          options: -v ${{ github.workspace }}:/workspace -w /workspace
+          run: |
+            dnf install -y \
+              gtk4-devel \
+              libadwaita-devel \
+              gtksourceview5-devel \
+              glib2-devel \
+              pkg-config \
+              gcc \
+              curl \
+              tar
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+            source "$HOME/.cargo/env"
+            cargo build --release
+            mkdir -p AppDir/usr/bin AppDir/usr/share/glib-2.0/schemas
+            cp target/release/chvarkov AppDir/usr/bin/chvarkov
+            cp net.nocopypaste.chvarkov.gschema.xml AppDir/usr/share/glib-2.0/schemas/
+            glib-compile-schemas AppDir/usr/share/glib-2.0/schemas/
 
-      - name: Install system dependencies
+      - name: Install Ubuntu AppImage tools
         run: |
+          sudo apt-get update
           sudo apt-get install -y \
-            libgtk-4-dev \
-            libadwaita-1-dev \
-            libgtksourceview-5-dev \
-            libglib2.0-dev \
-            pkg-config \
-            build-essential \
             libfuse2 \
             desktop-file-utils \
             libgdk-pixbuf2.0-dev \
-            librsvg2-dev
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build release binary
-        run: cargo build --release
+            librsvg2-dev \
+            libglib2.0-dev
 
       - name: Download linuxdeploy + GTK plugin
         run: |
@@ -106,13 +115,8 @@ jobs:
             https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
           chmod +x linuxdeploy.AppImage linuxdeploy-plugin-gtk.sh
 
-      - name: Assemble AppDir
+      - name: Assemble AppDir metadata
         run: |
-          mkdir -p AppDir/usr/bin
-          mkdir -p AppDir/usr/share/glib-2.0/schemas
-          cp target/release/chvarkov AppDir/usr/bin/chvarkov
-          cp net.nocopypaste.chvarkov.gschema.xml AppDir/usr/share/glib-2.0/schemas/
-          glib-compile-schemas AppDir/usr/share/glib-2.0/schemas/
           install -Dm644 data/net.nocopypaste.chvarkov.desktop \
             AppDir/usr/share/applications/net.nocopypaste.chvarkov.desktop
           install -Dm644 data/net.nocopypaste.chvarkov.svg \
