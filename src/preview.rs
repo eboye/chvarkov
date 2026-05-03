@@ -1,5 +1,7 @@
 use gtk4 as gtk;
 use gtk::prelude::*;
+use libadwaita as adw;
+use adw::prelude::*;
 use sourceview5 as sourceview;
 use sourceview::prelude::*;
 
@@ -72,11 +74,12 @@ impl Preview {
         let is_video = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "video/*")).unwrap_or(false);
         let is_text = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "text/*")).unwrap_or(false);
 
-        if is_image && large {
+        if is_image {
             let picture = gtk::Picture::for_filename(path);
             picture.set_content_fit(gtk::ContentFit::Contain);
             picture.set_hexpand(true);
             picture.set_vexpand(true);
+            picture.set_height_request(if large { 400 } else { 200 });
             container.append(&picture);
         } else if is_video && large {
             let file = gio::File::for_path(path);
@@ -163,6 +166,177 @@ impl Preview {
         container.append(&grid);
         container
     }
+
+    pub fn create_properties_layout(file_info: &gio::FileInfo, path: &std::path::Path) -> gtk::Box {
+        let container = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(0)
+            .margin_top(12)
+            .margin_bottom(12)
+            .margin_start(12)
+            .margin_end(12)
+            .build();
+
+        // 1. Header with Thumbnail/Icon
+        let header_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(8)
+            .margin_bottom(24)
+            .build();
+
+        let content_type = file_info.content_type();
+        let is_image = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "image/*")).unwrap_or(false);
+
+        if is_image {
+            let picture = gtk::Picture::for_filename(path);
+            picture.set_content_fit(gtk::ContentFit::Contain);
+            picture.set_height_request(128);
+            header_box.append(&picture);
+        } else {
+            let image = gtk::Image::builder()
+                .pixel_size(96)
+                .halign(gtk::Align::Center)
+                .build();
+            if let Some(icon) = file_info.icon() {
+                image.set_from_gicon(&icon);
+            }
+            header_box.append(&image);
+        }
+
+        let name_label = gtk::Label::builder()
+            .label(file_info.display_name().as_str())
+            .css_classes(["title-1"])
+            .halign(gtk::Align::Center)
+            .ellipsize(gtk::pango::EllipsizeMode::Middle)
+            .build();
+        header_box.append(&name_label);
+
+        let type_desc = content_type
+            .map(|ct| gio::content_type_get_description(&ct).to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
+        
+        let sub_label = gtk::Label::builder()
+            .label(&format!("{} | {}", type_desc, glib::format_size(file_info.size() as u64)))
+            .halign(gtk::Align::Center)
+            .css_classes(["dim-label"])
+            .build();
+        header_box.append(&sub_label);
+
+        container.append(&header_box);
+
+        // 2. Details Group
+        let details_group = adw::PreferencesGroup::new();
+        
+        let parent_folder = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "/".to_string());
+        let parent_row = adw::ActionRow::builder()
+            .title("Parent Folder")
+            .subtitle(parent_folder)
+            .build();
+        parent_row.add_suffix(&gtk::Image::from_icon_name("folder-symbolic"));
+        details_group.add(&parent_row);
+
+        let access_time = file_info.attribute_uint64("time::access");
+        if access_time > 0 {
+            if let Ok(dt) = glib::DateTime::from_unix_local(access_time as i64) {
+                if let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
+                    let row = adw::ActionRow::builder().title("Accessed").subtitle(formatted).build();
+                    details_group.add(&row);
+                }
+            }
+        }
+
+        if let Some(dt) = file_info.modification_date_time() {
+            if let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
+                let row = adw::ActionRow::builder().title("Modified").subtitle(formatted).build();
+                details_group.add(&row);
+            }
+        }
+
+        let create_time = file_info.attribute_uint64("time::created");
+        if create_time > 0 {
+            if let Ok(dt) = glib::DateTime::from_unix_local(create_time as i64) {
+                if let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
+                    let row = adw::ActionRow::builder().title("Created").subtitle(formatted).build();
+                    details_group.add(&row);
+                }
+            }
+        }
+
+        container.append(&details_group);
+
+        // 3. Permissions Group
+        let perm_group = adw::PreferencesGroup::builder()
+            .margin_top(24)
+            .build();
+        
+        let mode = file_info.attribute_uint32("unix::mode");
+        let perm_str = if mode != 0 {
+            format_permissions(mode)
+        } else {
+            "Unknown".to_string()
+        };
+
+        let perm_row = adw::ExpanderRow::builder()
+            .title("Permissions")
+            .subtitle(perm_str)
+            .build();
+        
+        let owner_uid = file_info.attribute_uint32("unix::uid");
+        let owner_user = file_info.attribute_string("unix::user").unwrap_or_else(|| "".into());
+        let owner_subtitle = if !owner_user.is_empty() {
+            format!("{} (UID: {})", owner_user, owner_uid)
+        } else {
+            format!("UID: {}", owner_uid)
+        };
+
+        let owner_row = adw::ActionRow::builder()
+            .title("Owner")
+            .subtitle(owner_subtitle)
+            .build();
+        perm_row.add_row(&owner_row);
+
+        let group_gid = file_info.attribute_uint32("unix::gid");
+        let group_name = file_info.attribute_string("unix::group").unwrap_or_else(|| "".into());
+        let group_subtitle = if !group_name.is_empty() {
+            format!("{} (GID: {})", group_name, group_gid)
+        } else {
+            format!("GID: {}", group_gid)
+        };
+
+        let group_row = adw::ActionRow::builder()
+            .title("Group")
+            .subtitle(group_subtitle)
+            .build();
+        perm_row.add_row(&group_row);
+
+        perm_group.add(&perm_row);
+
+        container.append(&perm_group);
+
+        container
+    }
+}
+
+fn format_permissions(mode: u32) -> String {
+    let mut s = String::new();
+    let r = mode & 0o400 != 0;
+    let w = mode & 0o200 != 0;
+    let x = mode & 0o100 != 0;
+
+    if r && w {
+        s.push_str("Read and Write");
+    } else if r {
+        s.push_str("Read-only");
+    } else if w {
+        s.push_str("Write-only");
+    } else {
+        s.push_str("No access");
+    }
+
+    if x {
+        s.push_str(" (Executable)");
+    }
+    s
 }
 
 fn add_info_row(grid: &gtk::Grid, label_text: &str, value_text: &str, row: &mut i32) {

@@ -151,6 +151,13 @@ impl Column {
         let list_view = gtk::ListView::new(Some(selection_model.clone()), Some(factory));
         list_view.set_focusable(true);
 
+        list_view.connect_activate(move |_, position| {
+            println!("ListView activate triggered at position {}", position);
+            if let Some(app) = gio::Application::default() {
+                app.activate_action("open", None);
+            }
+        });
+
         // Click-to-deselect on empty space
         let click_gesture = gtk::GestureClick::builder().button(1).build();
         let sel_model_clone = selection_model.clone();

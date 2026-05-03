@@ -25,17 +25,21 @@ thread_local! {
 }
 
 fn main() {
-    // For development, point GSETTINGS_SCHEMA_DIR to our compiled schemas
-    // Resolve relative to the binary location so it works regardless of CWD
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let schema_dir = exe_dir.join("compiled_schemas");
-            if schema_dir.exists() {
-                unsafe {
-                    std::env::set_var("GSETTINGS_SCHEMA_DIR", &schema_dir);
-                }
-            }
-        }
+    // For development, point GSETTINGS_SCHEMA_DIR to our compiled schemas.
+    // Check next to the binary first (installed / AppImage layout), then fall
+    // back to the current working directory (cargo run / cargo watch).
+    let schema_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.join("compiled_schemas")))
+        .filter(|d| d.exists())
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|cwd| cwd.join("compiled_schemas"))
+                .filter(|d| d.exists())
+        });
+    if let Some(dir) = schema_dir {
+        unsafe { std::env::set_var("GSETTINGS_SCHEMA_DIR", &dir); }
     }
 
     let application = Application::builder()
@@ -201,12 +205,13 @@ fn setup_actions(app: &Application) {
 
     let open_action = gio::SimpleAction::new("open", None);
     open_action.connect_activate(|_, _| {
-        ACTIVE_MANAGER.with(|m| {
-            if let Some(manager) = m.borrow().as_ref() {
-                if let Some(selection) = manager.current_selection.borrow().as_ref() {
-                    let file_info = &selection.file_info;
-                    let path = &selection.path;
-
+       println!("Open action triggered");
+       ACTIVE_MANAGER.with(|m| {
+           if let Some(manager) = m.borrow().as_ref() {
+               if let Some(selection) = manager.current_selection.borrow().as_ref() {
+                   let file_info = &selection.file_info;
+                   let path = &selection.path;
+                   println!("Attempting to open: {:?}", path);
                     let is_dir = file_info.file_type() == gio::FileType::Directory || path.is_dir();
 
                     if is_dir {
@@ -331,7 +336,50 @@ fn setup_actions(app: &Application) {
     app.add_action(&sharing_options_action);
 
     let properties_action = gio::SimpleAction::new("properties", None);
-    properties_action.connect_activate(|_, _| println!("Properties triggered"));
+    let app_weak_prop = app.downgrade();
+    properties_action.connect_activate(move |_, _| {
+        if let Some(app) = app_weak_prop.upgrade() {
+            ACTIVE_MANAGER.with(|m| {
+                if let Some(manager) = m.borrow().as_ref() {
+                    if let Some(selection) = manager.current_selection.borrow().as_ref() {
+                        let file_info = &selection.file_info;
+                        let path = &selection.path;
+
+                        if let Some(parent_window) = app.active_window() {
+                            let prop_window = adw::Window::builder()
+                                .title(format!("Properties: {}", file_info.display_name()))
+                                .transient_for(&parent_window)
+                                .modal(true)
+                                .default_width(420)
+                                .default_height(600)
+                                .build();
+
+                            let content = Preview::create_properties_layout(file_info, path);
+
+                            let scrolled = gtk::ScrolledWindow::builder()
+                                .hscrollbar_policy(gtk::PolicyType::Never)
+                                .vscrollbar_policy(gtk::PolicyType::Automatic)
+                                .child(&content)
+                                .build();
+
+                            let toolbar_view = adw::ToolbarView::builder()
+                                .content(&scrolled)
+                                .build();
+
+                            let header_bar = adw::HeaderBar::builder()
+                                .show_end_title_buttons(true)
+                                .build();
+
+                            toolbar_view.add_top_bar(&header_bar);
+
+                            prop_window.set_content(Some(&toolbar_view));
+                            prop_window.present();
+                        }
+                    }
+                }
+            });
+        }
+    });
     app.add_action(&properties_action);
     app.set_accels_for_action("app.properties", &["<Alt>Return"]);
 
@@ -555,9 +603,7 @@ fn show_preferences_window(app: &Application) {
     let window = app.active_window().unwrap();
     let settings = gio::Settings::new("net.nocopypaste.chvarkov");
 
-    let pref_window = adw::PreferencesWindow::builder()
-        .transient_for(&window)
-        .modal(true)
+    let pref_window = adw::PreferencesDialog::builder()
         .build();
 
     let page = adw::PreferencesPage::new();
@@ -592,17 +638,16 @@ fn show_preferences_window(app: &Application) {
     default_path_row.add_suffix(&pick_button);
 
     let settings_path = settings.clone();
-    let pref_window_weak = pref_window.downgrade();
+    let window_c = window.clone();
     pick_button.connect_clicked(move |_| {
-        if let Some(pref_window) = pref_window_weak.upgrade() {
-            let dialog = gtk::FileDialog::builder()
-                .title("Select Default Startup Directory")
-                .build();
+        let dialog = gtk::FileDialog::builder()
+            .title("Select Default Startup Directory")
+            .build();
 
-            let settings_c = settings_path.clone();
-            let label_c = path_label.clone();
-            dialog.select_folder(Some(&pref_window), gio::Cancellable::NONE, move |res| {
-                if let Ok(folder) = res {
+        let settings_c = settings_path.clone();
+        let label_c = path_label.clone();
+        dialog.select_folder(Some(&window_c), gio::Cancellable::NONE, move |res| {
+            if let Ok(folder) = res {
                     if let Some(path) = folder.path() {
                         let path_str = path.to_string_lossy().to_string();
                         let _ = settings_c.set_string("default-path", &path_str);
@@ -610,7 +655,6 @@ fn show_preferences_window(app: &Application) {
                     }
                 }
             });
-        }
     });
     group.add(&default_path_row);
 
@@ -635,7 +679,7 @@ fn show_preferences_window(app: &Application) {
     });
     group.add(&folders_first_row);
 
-    pref_window.present();
+    pref_window.present(Some(&window));
 }
 
 fn build_ui(app: &Application) {
@@ -1052,8 +1096,7 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
         .margin_end(12)
         .build();
 
-    let dialog = adw::MessageDialog::builder()
-        .transient_for(parent)
+    let dialog = adw::AlertDialog::builder()
         .heading("Rename File")
         .body(&format!("Enter a new name for '{}':", old_name))
         .extra_child(&entry)
@@ -1068,7 +1111,7 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
     let path_clone = path.clone();
     let manager_c = manager.clone();
     let old_name_c = old_name.clone();
-    dialog.connect_response(None, move |d, response| {
+    dialog.connect_response(None, move |_d, response| {
         if response == "rename" {
             let new_name = entry.text().to_string();
             if !new_name.is_empty() && new_name != old_name_c {
@@ -1092,10 +1135,9 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
                 );
             }
         }
-        d.close();
     });
 
-    dialog.present();
+    dialog.present(Some(parent));
 }
 
 fn trash_file(manager: Rc<ColumnManager>, path: PathBuf) {
