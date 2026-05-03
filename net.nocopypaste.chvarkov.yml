@@ -30,7 +30,6 @@ modules:
   - name: chvarkov
     buildsystem: simple
     build-commands:
-      - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --release --verbose
       - install -Dm755 target/release/chvarkov /app/bin/chvarkov
       - install -Dm644 data/net.nocopypaste.chvarkov.desktop /app/share/applications/net.nocopypaste.chvarkov.desktop
@@ -44,7 +43,3 @@ modules:
     sources:
       - type: dir
         path: .
-      - type: shell
-        commands:
-          - cargo vendor --no-merge-sources vendor
-      - generated-sources.json

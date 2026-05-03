@@ -150,28 +150,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate Cargo vendor sources
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Vendor Cargo dependencies
         run: |
           cargo vendor vendor
-          # Produce the generated-sources.json that flatpak-builder needs
-          python3 - <<'EOF'
-          import json, os, hashlib, subprocess
+          # Write the vendored config so flatpak-builder's offline cargo build works
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'TOML'
+          [alias]
+          xtask = "run --package xtask --"
 
-          sources = []
-          for dep_dir in os.listdir("vendor"):
-              dep_path = os.path.join("vendor", dep_dir)
-              if not os.path.isdir(dep_path):
-                  continue
-              sources.append({
-                  "type": "dir",
-                  "path": dep_path,
-                  "dest": f"vendor/{dep_dir}"
-              })
+          [source.crates-io]
+          replace-with = "vendored-sources"
 
-          with open("generated-sources.json", "w") as f:
-              json.dump(sources, f, indent=2)
-          print(f"Generated {len(sources)} vendor sources")
-          EOF
+          [source.vendored-sources]
+          directory = "vendor"
+          TOML
 
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
