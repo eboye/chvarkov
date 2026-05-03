@@ -128,23 +128,25 @@ jobs:
             cp data/net.nocopypaste.chvarkov.svg AppDir/
             ln -sf net.nocopypaste.chvarkov.svg AppDir/.DirIcon
 
-            # Bundle all shared library dependencies (skip kernel-provided vdso libs)
+            # Bundle all shared library dependencies.
+            # Exclude glibc family — they are ABI-coupled to the kernel and must
+            # come from the host, never bundled in an AppImage.
+            EXCLUDE='^lib(c|m|dl|rt|pthread|resolv|nss_|nsl|util|mvec|ld-linux|ld-musl|BrokenLocale|anl|cidn|crypt|nss|z)\.'
             mkdir -p AppDir/usr/lib
-            ldd AppDir/usr/bin/chvarkov \
-              | awk '/=> \// {print $3}' \
-              | grep -v '^$' \
-              | sort -u \
-              | while read lib; do
-                  cp -n "$lib" AppDir/usr/lib/ 2>/dev/null || true
-                done
-            # Recursively bundle deps of bundled libs (one level deep for GTK stack)
-            find AppDir/usr/lib -name '*.so*' -type f | while read bundled; do
-              ldd "$bundled" 2>/dev/null \
+            bundle_libs() {
+              ldd "$1" 2>/dev/null \
                 | awk '/=> \// {print $3}' \
                 | grep -v '^$' \
                 | while read lib; do
+                    base=$(basename "$lib")
+                    echo "$base" | grep -qE "$EXCLUDE" && continue
                     cp -n "$lib" AppDir/usr/lib/ 2>/dev/null || true
                   done
+            }
+            bundle_libs AppDir/usr/bin/chvarkov
+            # One extra pass for GTK/GLib plugin deps
+            find AppDir/usr/lib -name '*.so*' -type f | while read bundled; do
+              bundle_libs "$bundled"
             done
 
             # Build AppImage (extract first to run without FUSE in container)
