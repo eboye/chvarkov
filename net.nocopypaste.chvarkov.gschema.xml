@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
-  <schema id="com.example.chvarkov" path="/com/example/chvarkov/">
+  <schema id="net.nocopypaste.chvarkov" path="/net/nocopypaste/chvarkov/">
     <key name="show-hidden" type="b">
       <default>false</default>
       <summary>Show hidden files</summary>
