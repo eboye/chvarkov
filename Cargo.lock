@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "chvarkov"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "gio",
  "glib",
@@ -727,3 +727,7 @@ checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
