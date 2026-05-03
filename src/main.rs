@@ -7,7 +7,7 @@ mod utils;
 
 use libadwaita as adw;
 use adw::prelude::*;
-use adw::{Application, ApplicationWindow, HeaderBar, OverlaySplitView};
+use adw::{Application, ApplicationWindow, HeaderBar, OverlaySplitView, ToastOverlay, Toast};
 use gtk4 as gtk;
 use gtk::{Box, Orientation, ScrolledWindow};
 use std::path::PathBuf;
@@ -79,9 +79,10 @@ fn setup_styles() {
         
         .navigation-sidebar {
             background-color: @window_bg_color;
+            border-right: 1px solid alpha(@borders, 0.3);
         }
 
-        /* Absolute Padding Removal for Alignment */
+        /* Absolute Alignment Scrub */
         .sidebar-title-area, headerbar, .headerbar {
             background: none;
             background-color: @window_bg_color;
@@ -245,7 +246,20 @@ fn setup_actions(app: &Application) {
     app.add_action(&copy_to_action);
 
     let rename_action = gio::SimpleAction::new("rename", None);
-    rename_action.connect_activate(|_, _| println!("Rename action triggered"));
+    let app_weak_rename = app.downgrade();
+    rename_action.connect_activate(move |_, _| {
+        if let Some(app) = app_weak_rename.upgrade() {
+            ACTIVE_MANAGER.with(|m| {
+                if let Some(manager) = m.borrow().as_ref() {
+                    if let Some(selection) = manager.current_selection.borrow().as_ref() {
+                        if let Some(window) = app.active_window().and_then(|w| w.downcast::<ApplicationWindow>().ok()) {
+                            show_rename_dialog(&window, manager.clone(), &selection.file_info.display_name(), selection.path.clone());
+                        }
+                    }
+                }
+            });
+        }
+    });
     app.add_action(&rename_action);
     app.set_accels_for_action("app.rename", &["F2"]);
 
@@ -263,7 +277,15 @@ fn setup_actions(app: &Application) {
     app.add_action(&email_action);
 
     let delete_action = gio::SimpleAction::new("delete", None);
-    delete_action.connect_activate(|_, _| println!("Delete action triggered"));
+    delete_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                if let Some(selection) = manager.current_selection.borrow().as_ref() {
+                    trash_file(manager.clone(), selection.path.clone());
+                }
+            }
+        });
+    });
     app.add_action(&delete_action);
     app.set_accels_for_action("app.delete", &["Delete"]);
 
@@ -769,6 +791,8 @@ fn build_ui(app: &Application) {
 
     main_content.append(&header_bar);
 
+    let toast_overlay = ToastOverlay::new();
+    
     let settings = gio::Settings::new("com.example.chvarkov");
     
     // Responsive labels logic
@@ -843,6 +867,7 @@ fn build_ui(app: &Application) {
     adj.connect_page_size_notify(snap_to_right);
 
     let manager = Rc::new(ColumnManager::new(columns_box, scrolled_window, show_hidden, show_meta, zoom_level, sort_type, folders_first));
+    *manager.toast_overlay.borrow_mut() = Some(toast_overlay.clone());
     ACTIVE_MANAGER.with(|m| *m.borrow_mut() = Some(manager.clone()));
 
     // Breadcrumb Bar - Zero margins for absolute alignment
@@ -987,10 +1012,88 @@ fn build_ui(app: &Application) {
     }
 
     main_content.append(&breadcrumb_scrolled);
-    split_view.set_content(Some(&main_content));
+    
+    toast_overlay.set_child(Some(&main_content));
+    split_view.set_content(Some(&toast_overlay));
     
     window.set_content(Some(&split_view));
     window.present();
+}
+
+fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, old_name_str: &str, path: PathBuf) {
+    let old_name = old_name_str.to_string();
+    let entry = gtk::Entry::builder()
+        .text(&old_name)
+        .activates_default(true)
+        .margin_top(12)
+        .margin_bottom(12)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+
+    let dialog = adw::MessageDialog::builder()
+        .transient_for(parent)
+        .heading("Rename File")
+        .body(&format!("Enter a new name for '{}':", old_name))
+        .extra_child(&entry)
+        .build();
+
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("rename", "Rename");
+    dialog.set_default_response(Some("rename"));
+    dialog.set_close_response("cancel");
+    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
+
+    let path_clone = path.clone();
+    let manager_c = manager.clone();
+    let old_name_c = old_name.clone();
+    dialog.connect_response(None, move |d, response| {
+        if response == "rename" {
+            let new_name = entry.text().to_string();
+            if !new_name.is_empty() && new_name != old_name_c {
+                let file = gio::File::for_path(&path_clone);
+                let manager_inner = manager_c.clone();
+                let name_to_report = new_name.clone();
+                file.set_display_name_async(
+                    &new_name,
+                    glib::Priority::DEFAULT,
+                    gio::Cancellable::NONE,
+                    move |res| {
+                        match res {
+                            Ok(_) => {
+                                manager_inner.send_toast(&format!("Renamed to {}", name_to_report));
+                            },
+                            Err(e) => {
+                                manager_inner.send_toast(&format!("Error: {}", e));
+                            }
+                        }
+                    }
+                );
+            }
+        }
+        d.close();
+    });
+
+    dialog.present();
+}
+
+fn trash_file(manager: Rc<ColumnManager>, path: PathBuf) {
+    let file = gio::File::for_path(&path);
+    let manager_c = manager.clone();
+    file.trash_async(
+        glib::Priority::DEFAULT,
+        gio::Cancellable::NONE,
+        move |res| {
+            match res {
+                Ok(_) => {
+                    manager_c.send_toast("Moved to Trash");
+                },
+                Err(e) => {
+                    manager_c.send_toast(&format!("Error: {}", e));
+                }
+            }
+        }
+    );
 }
 
 #[derive(Clone)]
@@ -1021,6 +1124,7 @@ struct ColumnManager {
     entries: Rc<RefCell<Vec<ColumnEntry>>>,
     current_selection: Rc<RefCell<Option<SelectionInfo>>>,
     preview_window: Rc<RefCell<Option<adw::Window>>>,
+    toast_overlay: Rc<RefCell<Option<ToastOverlay>>>,
 }
 
 impl ColumnManager {
@@ -1039,6 +1143,13 @@ impl ColumnManager {
             entries: Rc::new(RefCell::new(Vec::new())),
             current_selection: Rc::new(RefCell::new(None)),
             preview_window: Rc::new(RefCell::new(None)),
+            toast_overlay: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    fn send_toast(&self, message: &str) {
+        if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
+            overlay.add_toast(Toast::new(message));
         }
     }
 
