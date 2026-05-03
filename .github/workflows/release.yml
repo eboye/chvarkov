@@ -96,6 +96,7 @@ jobs:
             cp target/release/chvarkov AppDir/usr/bin/chvarkov
             cp net.nocopypaste.chvarkov.gschema.xml AppDir/usr/share/glib-2.0/schemas/
             glib-compile-schemas AppDir/usr/share/glib-2.0/schemas/
+            chmod -R 777 AppDir target/release/chvarkov
 
       - name: Install Ubuntu AppImage tools
         run: |
@@ -144,7 +145,7 @@ jobs:
     name: Build Flatpak bundle
     runs-on: ubuntu-latest
     container:
-      image: bilelmoussaoui/flatpak-github-actions:gnome-47
+      image: bilelmoussaoui/flatpak-github-actions:gnome-48
       options: --privileged
 
     steps:
