@@ -1,11 +1,12 @@
+use libadwaita as adw;
+use adw::prelude::*;
 use gtk4 as gtk;
-use gtk::prelude::*;
 use std::path::PathBuf;
 
 pub struct Sidebar {
     pub widget: gtk::Box,
     pub list_box: gtk::ListBox,
-    pub title_header: gtk::Box,
+    pub title_header: adw::HeaderBar,
     pub pref_footer: gtk::Box,
 }
 
@@ -23,9 +24,8 @@ impl Sidebar {
             .css_classes(["navigation-sidebar"])
             .build();
 
-        // Title Area - No margins, will be synced with headerbar height
-        let title_header = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
+        // Title Area - Use AdwHeaderBar to support macOS window controls
+        let title_header = adw::HeaderBar::builder()
             .css_classes(["sidebar-title-area"])
             .build();
 
@@ -44,7 +44,7 @@ impl Sidebar {
         attrs.insert(font_attr);
         title_label.set_attributes(Some(&attrs));
         
-        title_header.append(&title_label);
+        title_header.set_title_widget(Some(&title_label));
         container.append(&title_header);
 
         let list_box = gtk::ListBox::builder()

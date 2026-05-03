@@ -180,10 +180,38 @@ jobs:
           name: flatpak-bundle
           path: chvarkov-linux-amd64.flatpak
 
-  # ── 4. GitHub Release ────────────────────────────────────────────────────────
+  # ── 4. macOS ───────────────────────────────────────────────────────────────
+  macos:
+    name: Build macOS .app
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          brew install pkg-config gtk4 libadwaita adwaita-icon-theme gtksourceview5 glib
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build macOS .app
+        run: ./build.sh macos
+
+      - name: Compress .app bundle
+        run: zip -r Chvarkov-macos-aarch64.zip Chvarkov.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: Chvarkov-macos-aarch64.zip
+
+  # ── 5. GitHub Release ────────────────────────────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: [binary, appimage, flatpak]
+    needs: [binary, appimage, flatpak, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -199,6 +227,7 @@ jobs:
             chvarkov-linux-amd64.tar.gz
             chvarkov-linux-amd64.AppImage
             chvarkov-linux-amd64.flatpak
+            Chvarkov-macos-aarch64.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -126,21 +126,79 @@ build_flatpak() {
     success "Flatpak ready: ${REPO_ROOT}/${FLATPAK_OUT}"
 }
 
+# ── macOS build ───────────────────────────────────────────────────────────────
+build_macos() {
+    info "Building macOS .app bundle..."
+    
+    # Check for macOS
+    if [[ "$OSTYPE" != "darwin"* ]]; then
+        warn "This target is intended for macOS. Proceeding anyway..."
+    fi
+
+    require glib-compile-schemas "Install with: brew install glib"
+
+    APP_NAME="Chvarkov"
+    APP_DIR="${REPO_ROOT}/${APP_NAME}.app"
+    CONTENTS_DIR="${APP_DIR}/Contents"
+    MACOS_DIR="${CONTENTS_DIR}/MacOS"
+    VERSION=$(grep "^version =" Cargo.toml | head -n1 | cut -d'"' -f2 || echo "0.1.0")
+
+    info "Building release binary..."
+    cargo build --release
+
+    info "Assembling .app structure..."
+    rm -rf "${APP_DIR}"
+    mkdir -p "${MACOS_DIR}/compiled_schemas"
+
+    cp "target/release/chvarkov" "${MACOS_DIR}/chvarkov"
+    
+    # Compile schemas directly into the bundle
+    glib-compile-schemas . --targetdir="${MACOS_DIR}/compiled_schemas"
+
+    # Create Info.plist
+    cat > "${CONTENTS_DIR}/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>chvarkov</string>
+    <key>CFBundleIdentifier</key>
+    <string>${APP_ID}</string>
+    <key>CFBundleName</key>
+    <string>${APP_NAME}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+EOF
+
+    success "macOS .app ready: ${APP_DIR}"
+}
+
 # ── Menu / argument dispatch ──────────────────────────────────────────────────
 run_menu() {
     echo ""
     echo -e "${CYAN}chvarkov local build${NC}"
     echo "────────────────────"
-    echo "  1) AppImage"
-    echo "  2) Flatpak"
-    echo "  3) Both"
+    echo "  1) AppImage (Linux)"
+    echo "  2) Flatpak (Linux)"
+    echo "  3) macOS .app"
+    echo "  4) All"
     echo "  q) Quit"
     echo ""
     read -rp "Choice: " choice
     case "$choice" in
         1) build_appimage ;;
         2) build_flatpak ;;
-        3) build_appimage; build_flatpak ;;
+        3) build_macos ;;
+        4) build_appimage; build_flatpak; build_macos ;;
         q|Q) exit 0 ;;
         *) die "Invalid choice" ;;
     esac
@@ -149,7 +207,9 @@ run_menu() {
 case "${1:-}" in
     appimage) build_appimage ;;
     flatpak)  build_flatpak ;;
+    macos)    build_macos ;;
     both)     build_appimage; build_flatpak ;;
+    all)      build_appimage; build_flatpak; build_macos ;;
     "")       run_menu ;;
-    *)        die "Unknown target '${1}'. Use: appimage | flatpak | both" ;;
+    *)        die "Unknown target '${1}'. Use: appimage | flatpak | macos | all" ;;
 esac

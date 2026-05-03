@@ -367,7 +367,6 @@ fn setup_actions(app: &Application) {
                                 .build();
 
                             let header_bar = adw::HeaderBar::builder()
-                                .show_end_title_buttons(true)
                                 .build();
 
                             toolbar_view.add_top_bar(&header_bar);
@@ -979,6 +978,19 @@ fn build_ui(app: &Application) {
 
     split_view.set_sidebar(Some(&sidebar.widget));
     split_view.set_show_sidebar(show_sidebar);
+
+    // macOS window controls are on the start (left) side.
+    // In a split view, they should be in the sidebar's header.
+    // If the sidebar is hidden, they should move to the main header.
+    sidebar.title_header.set_show_end_title_buttons(false);
+    header_bar.set_show_start_title_buttons(!show_sidebar);
+
+    let header_bar_limit = header_bar.clone();
+    split_view.connect_notify_local(Some("show-sidebar"), move |sv, _| {
+        if let Ok(sv) = sv.clone().downcast::<OverlaySplitView>() {
+            header_bar_limit.set_show_start_title_buttons(!sv.shows_sidebar());
+        }
+    });
 
     let manager_sidebar_clone = manager.clone();
     let split_view_row_clone = split_view.clone();
