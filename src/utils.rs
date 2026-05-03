@@ -258,3 +258,79 @@ pub fn create_sorter(sort_type: &str, folders_first: bool) -> gtk::Sorter {
 
     multi_sorter.upcast()
 }
+
+/// Unified logic to set either a thumbnail or a standard icon for a file.
+pub fn set_icon_and_thumbnail(image: &gtk::Image, file_info: &gio::FileInfo) {
+    let mut icon_set = false;
+    if let Some(thumb_path) = file_info.attribute_byte_string("thumbnail::path") {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(thumb_path.as_bytes()));
+        let file = gio::File::for_path(path);
+        let thumb_icon = gio::FileIcon::new(&file);
+        image.set_from_gicon(&thumb_icon);
+        image.add_css_class("thumbnail");
+        icon_set = true;
+    }
+
+    if !icon_set {
+        if let Some(icon) = file_info.icon() {
+            image.set_from_gicon(&icon);
+            image.remove_css_class("thumbnail");
+        }
+    }
+}
+
+/// Sets up common view controllers:
+/// 1. Click-to-deselect on empty space
+/// 2. Keyboard-triggered context menu (Menu key / Shift+F10)
+pub fn setup_view_common_controllers(view: &impl gtk::prelude::IsA<gtk::Widget>, selection_model: &gtk::MultiSelection) {
+    // Click-to-deselect
+    let click_gesture = gtk::GestureClick::builder().button(1).build();
+    let sel_model_clone = selection_model.clone();
+    click_gesture.connect_pressed(move |_, _, _, _| {
+        sel_model_clone.unselect_all();
+    });
+    view.add_controller(click_gesture);
+
+    // Keyboard context menu
+    attach_context_menu_key_controller(view);
+}
+
+pub fn get_list_icon_size(zoom_level: i32) -> i32 {
+    match zoom_level {
+        0 => 16,
+        1 => 24,
+        2 => 32,
+        3 => 48,
+        4 => 64,
+        _ => 96,
+    }
+}
+
+pub fn get_grid_icon_size(zoom_level: i32) -> i32 {
+    match zoom_level {
+        0 => 48,
+        1 => 64,
+        2 => 80,
+        3 => 96,
+        4 => 112,
+        _ => 128,
+    }
+}
+
+pub fn get_font_size(zoom_level: i32) -> i32 {
+    match zoom_level {
+        0 => 10,
+        1 => 11,
+        2 => 12,
+        3 => 14,
+        4 => 16,
+        _ => 18,
+    }
+}
+
+pub fn trigger_open_action() {
+    if let Some(app) = gio::Application::default() {
+        app.activate_action("open", None);
+    }
+}

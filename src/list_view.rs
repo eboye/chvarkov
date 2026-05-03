@@ -8,7 +8,7 @@ pub struct ListView {
 }
 
 impl ListView {
-    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, _zoom_level: i32, sort_type: &str, folders_first: bool) -> Self {
+    pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, zoom_level: i32, sort_type: &str, folders_first: bool) -> Self {
         let directory_list = utils::get_directory_list(path);
 
         let filter = gtk::CustomFilter::new(move |item| {
@@ -67,6 +67,8 @@ impl ListView {
             .focusable(true)
             .build();
 
+        let icon_size = utils::get_list_icon_size(zoom_level);
+
         // 1. Name Column (with TreeExpander)
         let name_factory = gtk::SignalListItemFactory::new();
         name_factory.connect_setup(move |_, list_item| {
@@ -78,7 +80,9 @@ impl ListView {
                 .spacing(8)
                 .build();
 
-            let image = gtk::Image::new();
+            let image = gtk::Image::builder()
+                .pixel_size(icon_size)
+                .build();
             let label = gtk::Label::builder()
                 .halign(gtk::Align::Start)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -108,24 +112,7 @@ impl ListView {
 
             label.set_text(&file_info.display_name());
 
-            // Check for thumbnail first
-            let mut icon_set = false;
-            if let Some(thumb_path) = file_info.attribute_byte_string("thumbnail::path") {
-                use std::os::unix::ffi::OsStrExt;
-                let path = std::path::Path::new(std::ffi::OsStr::from_bytes(thumb_path.as_bytes()));
-                let file = gio::File::for_path(path);
-                let thumb_icon = gio::FileIcon::new(&file);
-                image.set_from_gicon(&thumb_icon);
-                image.add_css_class("thumbnail");
-                icon_set = true;
-            }
-
-            if !icon_set {
-                if let Some(icon) = file_info.icon() {
-                    image.set_from_gicon(&icon);
-                    image.remove_css_class("thumbnail");
-                }
-            }
+            utils::set_icon_and_thumbnail(&image, &file_info);
         });
 
         let name_col = gtk::ColumnViewColumn::builder()
@@ -236,29 +223,20 @@ impl ListView {
 
         // activations
         column_view.connect_activate(move |_, _| {
-            if let Some(app) = gio::Application::default() {
-                app.activate_action("open", None);
-            }
+            utils::trigger_open_action();
         });
 
         // Universal Keyboard Shortcut Controller on the ColumnView itself
         let key_ctrl = gtk::EventControllerKey::new();
         key_ctrl.set_propagation_phase(gtk::PropagationPhase::Capture);
         let sel_model_shortcuts = selection_model.clone();
-        let cv_shortcuts = column_view.clone();
-        key_ctrl.connect_key_pressed(move |_, key, _, modifier| {
+        key_ctrl.connect_key_pressed(move |_, key, _, _| {
             let selection = sel_model_shortcuts.selection();
             if selection.is_empty() { return glib::Propagation::Proceed; }
 
             let first_idx = selection.minimum();
             let model = sel_model_shortcuts.model().unwrap();
             let item = model.item(first_idx);
-
-            // Handle Context Menu (Menu key or Shift+F10)
-            if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
-                utils::open_context_menu_at_center(&cv_shortcuts);
-                return glib::Propagation::Stop;
-            }
 
             // Handle Tree expansion
             if let Some(tree_row) = item.and_downcast::<gtk::TreeListRow>() {
@@ -278,13 +256,7 @@ impl ListView {
         });
         column_view.add_controller(key_ctrl);
 
-        // Click-to-deselect
-        let click_gesture = gtk::GestureClick::builder().button(1).build();
-        let sel_model_clone = selection_model.clone();
-        click_gesture.connect_pressed(move |_, _, _, _| {
-             sel_model_clone.unselect_all();
-        });
-        column_view.add_controller(click_gesture);
+        utils::setup_view_common_controllers(&column_view, &selection_model);
 
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Automatic)

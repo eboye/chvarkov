@@ -30,14 +30,7 @@ impl IconView {
 
         let factory = gtk::SignalListItemFactory::new();
 
-        let icon_size = match zoom_level {
-            0 => 48,
-            1 => 64,
-            2 => 80,
-            3 => 96,
-            4 => 112,
-            _ => 128,
-        };
+        let icon_size = utils::get_grid_icon_size(zoom_level);
 
         let item_width = icon_size + 24;
 
@@ -89,7 +82,6 @@ impl IconView {
             }
 
             utils::attach_context_menu_gesture(&container);
-            utils::attach_context_menu_key_controller(&container);
             list_item.set_child(Some(&container));
         });
 
@@ -103,24 +95,7 @@ impl IconView {
 
             label.set_text(&file_info.display_name());
 
-            // Check for thumbnail first
-            let mut icon_set = false;
-            if let Some(thumb_path) = file_info.attribute_byte_string("thumbnail::path") {
-                use std::os::unix::ffi::OsStrExt;
-                let path = std::path::Path::new(std::ffi::OsStr::from_bytes(thumb_path.as_bytes()));
-                let file = gio::File::for_path(path);
-                let thumb_icon = gio::FileIcon::new(&file);
-                image.set_from_gicon(&thumb_icon);
-                image.add_css_class("thumbnail");
-                icon_set = true;
-            }
-
-            if !icon_set {
-                if let Some(icon) = file_info.icon() {
-                    image.set_from_gicon(&icon);
-                    image.remove_css_class("thumbnail");
-                }
-            }
+            utils::set_icon_and_thumbnail(&image, &file_info);
 
             if show_meta {
                 if let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
@@ -139,18 +114,10 @@ impl IconView {
             .build();
 
         grid_view.connect_activate(move |_, _| {
-            if let Some(app) = gio::Application::default() {
-                app.activate_action("open", None);
-            }
+            utils::trigger_open_action();
         });
 
-        // Click-to-deselect on empty space
-        let click_gesture = gtk::GestureClick::builder().button(1).build();
-        let sel_model_clone = selection_model.clone();
-        click_gesture.connect_pressed(move |_, _, _, _| {
-             sel_model_clone.unselect_all();
-        });
-        grid_view.add_controller(click_gesture);
+        utils::setup_view_common_controllers(&grid_view, &selection_model);
 
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)

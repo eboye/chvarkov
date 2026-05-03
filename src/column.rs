@@ -32,23 +32,8 @@ impl Column {
         let factory = gtk::SignalListItemFactory::new();
 
         // Calculate sizes based on zoom level
-        let icon_size = match zoom_level {
-            0 => 16,
-            1 => 24,
-            2 => 32,
-            3 => 48,
-            4 => 64,
-            _ => 96,
-        };
-
-        let font_size = match zoom_level {
-            0 => 10,
-            1 => 11,
-            2 => 12,
-            3 => 14,
-            4 => 16,
-            _ => 18,
-        };
+        let icon_size = utils::get_list_icon_size(zoom_level);
+        let font_size = utils::get_font_size(zoom_level);
 
         factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
@@ -107,7 +92,6 @@ impl Column {
             root_box.append(&text_box);
 
             utils::attach_context_menu_gesture(&root_box);
-            utils::attach_context_menu_key_controller(&root_box);
             list_item.set_child(Some(&root_box));
         });
 
@@ -122,24 +106,7 @@ impl Column {
 
             label.set_text(&file_info.display_name());
 
-            // Check for thumbnail first
-            let mut icon_set = false;
-            if let Some(thumb_path) = file_info.attribute_byte_string("thumbnail::path") {
-                use std::os::unix::ffi::OsStrExt;
-                let path = std::path::Path::new(std::ffi::OsStr::from_bytes(thumb_path.as_bytes()));
-                let file = gio::File::for_path(path);
-                let thumb_icon = gio::FileIcon::new(&file);
-                image.set_from_gicon(&thumb_icon);
-                image.add_css_class("thumbnail");
-                icon_set = true;
-            }
-
-            if !icon_set {
-                if let Some(icon) = file_info.icon() {
-                    image.set_from_gicon(&icon);
-                    image.remove_css_class("thumbnail");
-                }
-            }
+            utils::set_icon_and_thumbnail(&image, &file_info);
 
             if show_meta {
                 if let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
@@ -151,20 +118,11 @@ impl Column {
         let list_view = gtk::ListView::new(Some(selection_model.clone()), Some(factory));
         list_view.set_focusable(true);
 
-        list_view.connect_activate(move |_, position| {
-            println!("ListView activate triggered at position {}", position);
-            if let Some(app) = gio::Application::default() {
-                app.activate_action("open", None);
-            }
+        list_view.connect_activate(move |_, _| {
+            utils::trigger_open_action();
         });
 
-        // Click-to-deselect on empty space
-        let click_gesture = gtk::GestureClick::builder().button(1).build();
-        let sel_model_clone = selection_model.clone();
-        click_gesture.connect_pressed(move |_gesture, _, _, _| {
-            sel_model_clone.unselect_all();
-        });
-        list_view.add_controller(click_gesture);
+        utils::setup_view_common_controllers(&list_view, &selection_model);
 
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)

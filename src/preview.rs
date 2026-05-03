@@ -4,6 +4,7 @@ use libadwaita as adw;
 use adw::prelude::*;
 use sourceview5 as sourceview;
 use sourceview::prelude::*;
+use crate::utils;
 
 pub struct Preview {
     pub widget: gtk::Box,
@@ -126,9 +127,7 @@ impl Preview {
                 .halign(gtk::Align::Center)
                 .build();
             
-            if let Some(icon) = file_info.icon() {
-                image.set_from_gicon(&icon);
-            }
+            utils::set_icon_and_thumbnail(&image, file_info);
             container.append(&image);
         }
 
@@ -197,9 +196,8 @@ impl Preview {
                 .pixel_size(96)
                 .halign(gtk::Align::Center)
                 .build();
-            if let Some(icon) = file_info.icon() {
-                image.set_from_gicon(&icon);
-            }
+            
+            utils::set_icon_and_thumbnail(&image, file_info);
             header_box.append(&image);
         }
 
