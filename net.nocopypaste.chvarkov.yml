@@ -26,7 +26,7 @@ modules:
     buildsystem: simple
     build-commands:
       - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-      - /root/.cargo/bin/cargo build --release --verbose
+      - /run/build/chvarkov/cargo/bin/cargo build --release --verbose
       - install -Dm755 target/release/chvarkov /app/bin/chvarkov
       - install -Dm644 data/net.nocopypaste.chvarkov.desktop /app/share/applications/net.nocopypaste.chvarkov.desktop
       - install -Dm644 data/net.nocopypaste.chvarkov.svg /app/share/icons/hicolor/scalable/apps/net.nocopypaste.chvarkov.svg
@@ -38,6 +38,7 @@ modules:
         - --share=network
       env:
         CARGO_HOME: /run/build/chvarkov/cargo
+        RUSTUP_HOME: /run/build/chvarkov/rustup
     sources:
       - type: dir
         path: .
