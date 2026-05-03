@@ -22,10 +22,10 @@ impl ListView {
         });
 
         let filter_model = gtk::FilterListModel::new(Some(directory_list), Some(filter));
-        
+
         let sorter = utils::create_sorter(sort_type, folders_first);
         let sort_model = gtk::SortListModel::new(Some(filter_model), Some(sorter));
-        
+
         let sort_type_owned = sort_type.to_string();
         // Tree Model for nested expansion
         let tree_model = gtk::TreeListModel::new(sort_model, false, false, move |item| {
@@ -37,7 +37,7 @@ impl ListView {
                         .file(&file)
                         .monitored(true)
                         .build();
-                    
+
                     let child_filter = gtk::CustomFilter::new(move |item| {
                         let info = item.downcast_ref::<gio::FileInfo>().unwrap();
                         if !show_hidden {
@@ -47,11 +47,11 @@ impl ListView {
                         }
                         true
                     });
-                    
+
                     let child_filter_model = gtk::FilterListModel::new(Some(child_dir_list), Some(child_filter));
                     let child_sorter = utils::create_sorter(&sort_type_owned, folders_first);
                     let child_sort_model = gtk::SortListModel::new(Some(child_filter_model), Some(child_sorter));
-                    
+
                     return Some(child_sort_model.upcast());
                 }
             }
@@ -72,37 +72,24 @@ impl ListView {
         name_factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
             let expander = gtk::TreeExpander::new();
-            
+
             let container = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
                 .build();
-            
+
             let image = gtk::Image::new();
             let label = gtk::Label::builder()
                 .halign(gtk::Align::Start)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
                 .build();
-            
+
             container.append(&image);
             container.append(&label);
-            
-            // Context menu right-click gesture still works on the row content
-            let gesture_right = gtk::GestureClick::builder()
-                .button(3)
-                .build();
-            
-            gesture_right.connect_pressed(move |gesture, _, x, y| {
-                let widget = gesture.widget().unwrap();
-                let menu = utils::create_context_menu();
-                let popover = gtk::PopoverMenu::from_model(Some(&menu));
-                popover.set_parent(&widget);
-                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-                popover.popup();
-            });
 
-            container.add_controller(gesture_right);
-            
+            // Context menu right-click gesture still works on the row content
+            utils::attach_context_menu_gesture(&container);
+
             expander.set_child(Some(&container));
             list_item.set_child(Some(&expander));
         });
@@ -111,16 +98,16 @@ impl ListView {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
             let tree_row = list_item.item().and_downcast::<gtk::TreeListRow>().unwrap();
             let file_info = tree_row.item().and_downcast::<gio::FileInfo>().unwrap();
-            
+
             let expander = list_item.child().and_downcast::<gtk::TreeExpander>().unwrap();
             expander.set_list_row(Some(&tree_row));
-            
+
             let container = expander.child().and_downcast::<gtk::Box>().unwrap();
             let image = container.first_child().unwrap().downcast::<gtk::Image>().unwrap();
             let label = image.next_sibling().unwrap().downcast::<gtk::Label>().unwrap();
 
             label.set_text(&file_info.display_name());
-            
+
             // Check for thumbnail first
             let mut icon_set = false;
             if let Some(thumb_path) = file_info.attribute_byte_string("thumbnail::path") {
@@ -166,7 +153,7 @@ impl ListView {
                 let tree_row = list_item.item().and_downcast::<gtk::TreeListRow>().unwrap();
                 let file_info = tree_row.item().and_downcast::<gio::FileInfo>().unwrap();
                 let label = list_item.child().and_downcast::<gtk::Label>().unwrap();
-                
+
                 let is_dir = file_info.file_type() == gio::FileType::Directory;
                 let text = if is_dir {
                     "Folder".to_string()
@@ -200,7 +187,7 @@ impl ListView {
                 let tree_row = list_item.item().and_downcast::<gtk::TreeListRow>().unwrap();
                 let file_info = tree_row.item().and_downcast::<gio::FileInfo>().unwrap();
                 let label = list_item.child().and_downcast::<gtk::Label>().unwrap();
-                
+
                 let date = file_info.modification_date_time()
                     .and_then(|dt| dt.format("%Y-%m-%d").ok())
                     .map(|s| s.to_string())
@@ -230,7 +217,7 @@ impl ListView {
                 let tree_row = list_item.item().and_downcast::<gtk::TreeListRow>().unwrap();
                 let file_info = tree_row.item().and_downcast::<gio::FileInfo>().unwrap();
                 let label = list_item.child().and_downcast::<gtk::Label>().unwrap();
-                
+
                 let is_dir = file_info.file_type() == gio::FileType::Directory;
                 if is_dir {
                     let count = file_info.attribute_uint32("standard::n-children");
@@ -262,22 +249,14 @@ impl ListView {
         key_ctrl.connect_key_pressed(move |_, key, _, modifier| {
             let selection = sel_model_shortcuts.selection();
             if selection.is_empty() { return glib::Propagation::Proceed; }
-            
+
             let first_idx = selection.minimum();
             let model = sel_model_shortcuts.model().unwrap();
             let item = model.item(first_idx);
 
             // Handle Context Menu (Menu key or Shift+F10)
             if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
-                let menu = utils::create_context_menu();
-                let popover = gtk::PopoverMenu::from_model(Some(&menu));
-                popover.set_parent(&cv_shortcuts);
-                
-                // Point to middle of current focus if possible, or just center
-                let width = cv_shortcuts.width();
-                let height = cv_shortcuts.height();
-                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
-                popover.popup();
+                utils::open_context_menu_at_center(&cv_shortcuts);
                 return glib::Propagation::Stop;
             }
 

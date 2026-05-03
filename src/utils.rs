@@ -1,9 +1,62 @@
 use gtk4 as gtk;
 use gtk::prelude::*;
 
+/// Attaches a right-click (`button 3`) gesture to `widget` that opens the context menu.
+/// Respects the Shift modifier: shows `create_context_menu_shift()` when Shift is held.
+pub fn attach_context_menu_gesture(widget: &impl gtk::prelude::IsA<gtk::Widget>) {
+    let gesture = gtk::GestureClick::builder().button(3).build();
+    gesture.connect_pressed(move |gesture, _, x, y| {
+        let w = gesture.widget().unwrap();
+        let shift_held = gesture.current_event_state()
+            .contains(gtk::gdk::ModifierType::SHIFT_MASK);
+        let menu = if shift_held { create_context_menu_shift() } else { create_context_menu() };
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&w);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover.popup();
+    });
+    widget.add_controller(gesture);
+}
+
+/// Attaches a keyboard controller to `widget` that opens the context menu on the
+/// `Menu` key or `Shift+F10`. The popover is anchored to the centre of the widget.
+pub fn attach_context_menu_key_controller(widget: &impl gtk::prelude::IsA<gtk::Widget>) {
+    let key_controller = gtk::EventControllerKey::new();
+    let widget_clone = widget.clone().upcast::<gtk::Widget>();
+    key_controller.connect_key_pressed(move |_, key, _, modifier| {
+        let is_menu_key = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if !is_menu_key {
+            return glib::Propagation::Proceed;
+        }
+        let menu = create_context_menu();
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&widget_clone);
+        let w = widget_clone.width();
+        let h = widget_clone.height();
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(w / 2, h / 2, 1, 1)));
+        popover.popup();
+        glib::Propagation::Stop
+    });
+    widget.add_controller(key_controller);
+}
+
+/// Opens the context menu anchored to the centre of `widget`.
+/// Used by keyboard handlers that already have a widget reference.
+pub fn open_context_menu_at_center(widget: &impl gtk::prelude::IsA<gtk::Widget>) {
+    let menu = create_context_menu();
+    let popover = gtk::PopoverMenu::from_model(Some(&menu));
+    let w = widget.clone().upcast::<gtk::Widget>();
+    popover.set_parent(&w);
+    let width = w.width();
+    let height = w.height();
+    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
+    popover.popup();
+}
+
 pub fn create_context_menu() -> gio::Menu {
     let menu = gio::Menu::new();
-    
+
     let section1 = gio::Menu::new();
     section1.append(Some("Open"), Some("app.open"));
     menu.append_section(None, &section1);
@@ -20,6 +73,47 @@ pub fn create_context_menu() -> gio::Menu {
     section3.append(Some("Create Link"), Some("app.create-link"));
     section3.append(Some("Compress..."), Some("app.compress"));
     section3.append(Some("Email..."), Some("app.email"));
+    section3.append(Some("Move to Trash"), Some("app.delete"));
+    section3.append(Some("Delete Permanently"), Some("app.permanent-delete"));
+    menu.append_section(None, &section3);
+
+    let section4 = gio::Menu::new();
+    section4.append(Some("Open in Terminal"), Some("app.open-terminal"));
+    section4.append(Some("Copy Path"), Some("app.copy-path"));
+    section4.append(Some("Copy URI"), Some("app.copy-uri"));
+    section4.append(Some("Copy Name"), Some("app.copy-name"));
+    section4.append(Some("Sharing Options"), Some("app.sharing-options"));
+    menu.append_section(None, &section4);
+
+    let section5 = gio::Menu::new();
+    section5.append(Some("Properties"), Some("app.properties"));
+    menu.append_section(None, &section5);
+
+    menu
+}
+
+/// Context menu variant shown when Shift is held — moves "Delete Permanently" to the top of the
+/// delete section to make the destructive action explicit.
+pub fn create_context_menu_shift() -> gio::Menu {
+    let menu = gio::Menu::new();
+
+    let section1 = gio::Menu::new();
+    section1.append(Some("Open"), Some("app.open"));
+    menu.append_section(None, &section1);
+
+    let section2 = gio::Menu::new();
+    section2.append(Some("Cut"), Some("app.cut"));
+    section2.append(Some("Copy"), Some("app.copy"));
+    section2.append(Some("Move to..."), Some("app.move-to"));
+    section2.append(Some("Copy to..."), Some("app.copy-to"));
+    menu.append_section(None, &section2);
+
+    let section3 = gio::Menu::new();
+    section3.append(Some("Rename..."), Some("app.rename"));
+    section3.append(Some("Create Link"), Some("app.create-link"));
+    section3.append(Some("Compress..."), Some("app.compress"));
+    section3.append(Some("Email..."), Some("app.email"));
+    section3.append(Some("Delete Permanently"), Some("app.permanent-delete"));
     section3.append(Some("Move to Trash"), Some("app.delete"));
     menu.append_section(None, &section3);
 
@@ -67,7 +161,7 @@ pub fn format_metadata(info: &gio::FileInfo) -> String {
         .unwrap_or_else(|| "----".to_string());
 
     let is_dir = info.file_type() == gio::FileType::Directory;
-    
+
     if is_dir {
         let count = info.attribute_uint32("standard::n-children");
         if count > 0 {
@@ -79,7 +173,7 @@ pub fn format_metadata(info: &gio::FileInfo) -> String {
         let type_desc = info.content_type()
             .map(|ct| gio::content_type_get_description(&ct).to_string())
             .unwrap_or_else(|| "Unknown".to_string());
-        
+
         let size = format_size(info.size());
         format!("{} | {} | {}", date, type_desc, size)
     }
@@ -113,7 +207,7 @@ pub fn create_sorter(sort_type: &str, folders_first: bool) -> gtk::Sorter {
                 let b = b.downcast_ref::<gio::FileInfo>().unwrap();
                 let a_time = a.modification_date_time().unwrap_or_else(|| glib::DateTime::from_unix_local(0).unwrap());
                 let b_time = b.modification_date_time().unwrap_or_else(|| glib::DateTime::from_unix_local(0).unwrap());
-                
+
                 if b_time > a_time {
                     gtk::Ordering::Larger
                 } else if b_time < a_time {

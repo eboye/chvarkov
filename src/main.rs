@@ -297,6 +297,19 @@ fn setup_actions(app: &Application) {
     app.add_action(&delete_action);
     app.set_accels_for_action("app.delete", &["Delete"]);
 
+    let permanent_delete_action = gio::SimpleAction::new("permanent-delete", None);
+    permanent_delete_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                if let Some(selection) = manager.current_selection.borrow().as_ref() {
+                    permanent_delete_file(manager.clone(), selection.path.clone());
+                }
+            }
+        });
+    });
+    app.add_action(&permanent_delete_action);
+    app.set_accels_for_action("app.permanent-delete", &["<Shift>Delete"]);
+
     let open_terminal_action = gio::SimpleAction::new("open-terminal", None);
     open_terminal_action.connect_activate(|_, _| println!("Open in Terminal triggered"));
     app.add_action(&open_terminal_action);
@@ -1095,9 +1108,31 @@ fn trash_file(manager: Rc<ColumnManager>, path: PathBuf) {
             match res {
                 Ok(_) => {
                     manager_c.send_toast("Moved to Trash");
+                    manager_c.on_file_deleted(&path);
                 },
                 Err(e) => {
-                    manager_c.send_toast(&format!("Error: {}", e));
+                    manager_c.send_toast(&format!("Error moving to trash: {}", e));
+                }
+            }
+        }
+    );
+}
+
+/// Permanently delete a file or directory (non-recoverable).
+fn permanent_delete_file(manager: Rc<ColumnManager>, path: PathBuf) {
+    let file = gio::File::for_path(&path);
+    let manager_c = manager.clone();
+    file.delete_async(
+        glib::Priority::DEFAULT,
+        gio::Cancellable::NONE,
+        move |res| {
+            match res {
+                Ok(_) => {
+                    manager_c.send_toast("Deleted permanently");
+                    manager_c.on_file_deleted(&path);
+                },
+                Err(e) => {
+                    manager_c.send_toast(&format!("Error deleting: {}", e));
                 }
             }
         }
@@ -1159,6 +1194,31 @@ impl ColumnManager {
         if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
             overlay.add_toast(Toast::new(message));
         }
+    }
+
+    /// Called after a file is trashed or permanently deleted.
+    /// Clears the current selection and collapses any child columns that were
+    /// opened from the deleted path, keeping only the parent column focused.
+    fn on_file_deleted(&self, deleted_path: &PathBuf) {
+        *self.current_selection.borrow_mut() = None;
+
+        let parent = deleted_path.parent().map(|p| p.to_path_buf());
+        let keep_count = if let Some(parent_path) = &parent {
+            let entries = self.entries.borrow();
+            entries.iter().position(|e| &e.path == parent_path)
+                .map(|i| i + 1)
+                .unwrap_or(entries.len())
+        } else {
+            self.entries.borrow().len()
+        };
+
+        let mut entries = self.entries.borrow_mut();
+        while entries.len() > keep_count {
+            let entry = entries.pop().unwrap();
+            self.columns_box.remove(&entry.container);
+        }
+
+        self.update_preview_if_open();
     }
 
     fn set_main_view(&self, view: gtk::Widget) {

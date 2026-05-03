@@ -11,7 +11,7 @@ pub struct Column {
 impl Column {
     pub fn new(path: &std::path::Path, show_hidden: bool, show_meta: bool, zoom_level: i32, sort_type: &str, folders_first: bool) -> Self {
         let directory_list = utils::get_directory_list(path);
-        
+
         let filter = gtk::CustomFilter::new(move |item| {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
             if !show_hidden {
@@ -23,14 +23,14 @@ impl Column {
         });
 
         let filter_model = gtk::FilterListModel::new(Some(directory_list), Some(filter));
-        
+
         let sorter = utils::create_sorter(sort_type, folders_first);
         let sort_model = gtk::SortListModel::new(Some(filter_model), Some(sorter));
-        
+
         let selection_model = gtk::MultiSelection::new(Some(sort_model));
-        
+
         let factory = gtk::SignalListItemFactory::new();
-        
+
         // Calculate sizes based on zoom level
         let icon_size = match zoom_level {
             0 => 16,
@@ -64,7 +64,7 @@ impl Column {
                 .pixel_size(icon_size)
                 .valign(gtk::Align::Center)
                 .build();
-            
+
             let text_box = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .valign(gtk::Align::Center)
@@ -75,7 +75,7 @@ impl Column {
                 .ellipsize(gtk::pango::EllipsizeMode::End)
                 .xalign(0.0)
                 .build();
-            
+
             let attrs = gtk::pango::AttrList::new();
             let mut font_attr = gtk::pango::AttrSize::new(font_size * gtk::pango::SCALE);
             font_attr.set_start_index(0);
@@ -92,7 +92,7 @@ impl Column {
                     .xalign(0.0)
                     .css_classes(["caption", "dim-label"])
                     .build();
-                
+
                 let meta_attrs = gtk::pango::AttrList::new();
                 let mut meta_font_attr = gtk::pango::AttrSize::new((font_size - 2).max(8) * gtk::pango::SCALE);
                 meta_font_attr.set_start_index(0);
@@ -106,39 +106,8 @@ impl Column {
             root_box.append(&image);
             root_box.append(&text_box);
 
-            // Context menu gesture
-            let gesture_right = gtk::GestureClick::builder()
-                .button(3)
-                .build();
-            
-            gesture_right.connect_pressed(move |gesture, _, x, y| {
-                let widget = gesture.widget().unwrap();
-                let menu = utils::create_context_menu();
-                let popover = gtk::PopoverMenu::from_model(Some(&menu));
-                popover.set_parent(&widget);
-                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-                popover.popup();
-            });
-
-            let key_controller = gtk::EventControllerKey::new();
-            let root_box_clone = root_box.clone();
-            key_controller.connect_key_pressed(move |_, key, _, modifier| {
-                if key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK)) {
-                    let widget = root_box_clone.clone().upcast::<gtk::Widget>();
-                    let menu = utils::create_context_menu();
-                    let popover = gtk::PopoverMenu::from_model(Some(&menu));
-                    popover.set_parent(&widget);
-                    let width = widget.width();
-                    let height = widget.height();
-                    popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(width / 2, height / 2, 1, 1)));
-                    popover.popup();
-                    return glib::Propagation::Stop;
-                }
-                glib::Propagation::Proceed
-            });
-
-            root_box.add_controller(gesture_right);
-            root_box.add_controller(key_controller);
+            utils::attach_context_menu_gesture(&root_box);
+            utils::attach_context_menu_key_controller(&root_box);
             list_item.set_child(Some(&root_box));
         });
 
@@ -146,13 +115,13 @@ impl Column {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
             let file_info = list_item.item().and_downcast::<gio::FileInfo>().unwrap();
             let root_box = list_item.child().and_downcast::<gtk::Box>().unwrap();
-            
+
             let image = root_box.first_child().unwrap().downcast::<gtk::Image>().unwrap();
             let text_box = image.next_sibling().unwrap().downcast::<gtk::Box>().unwrap();
             let label = text_box.first_child().unwrap().downcast::<gtk::Label>().unwrap();
-            
+
             label.set_text(&file_info.display_name());
-            
+
             // Check for thumbnail first
             let mut icon_set = false;
             if let Some(thumb_path) = file_info.attribute_byte_string("thumbnail::path") {
@@ -189,24 +158,24 @@ impl Column {
             sel_model_clone.unselect_all();
         });
         list_view.add_controller(click_gesture);
-        
+
         let scrolled_window = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .width_request(200 + (zoom_level * 40))
             .build();
-        
+
         scrolled_window.set_child(Some(&list_view));
 
         let resizer = gtk::Separator::new(gtk::Orientation::Vertical);
         resizer.set_cursor_from_name(Some("col-resize"));
         resizer.add_css_class("resizer");
-        
+
         let drag_gesture = gtk::GestureDrag::new();
         let sw_weak = scrolled_window.downgrade();
         let start_width = std::rc::Rc::new(std::cell::Cell::new(200 + (zoom_level * 40)));
         let start_width_clone = start_width.clone();
-        
+
         drag_gesture.connect_drag_begin(move |_, _, _| {
             if let Some(sw) = sw_weak.upgrade() {
                 start_width_clone.set(sw.width_request());
@@ -226,7 +195,7 @@ impl Column {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .build();
-        
+
         container.append(&scrolled_window);
         container.append(&resizer);
 
