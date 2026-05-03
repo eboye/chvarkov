@@ -5,7 +5,7 @@
 APPDIR="$(dirname "$(readlink -f "$0")")"
 
 # Set up library paths for bundled libraries
-export LD_LIBRARY_PATH="$APPDIR/usr/bin:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/bin:$LD_LIBRARY_PATH"
 
 # Set up GSettings schema path
 export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"

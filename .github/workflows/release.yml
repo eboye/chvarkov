@@ -128,11 +128,23 @@ jobs:
             cp data/net.nocopypaste.chvarkov.svg AppDir/
             ln -sf net.nocopypaste.chvarkov.svg AppDir/.DirIcon
 
-            # Bundle shared libraries
-            LIBS="libadwaita-1.so.0 libgtk-4.so.1 libgtksourceview-5.so.0"
-            for lib in $LIBS; do
-              src=$(ldconfig -p | grep "$lib " | awk '{print $NF}' | head -1)
-              [ -n "$src" ] && cp "$src" AppDir/usr/bin/
+            # Bundle all shared library dependencies (skip kernel-provided vdso libs)
+            mkdir -p AppDir/usr/lib
+            ldd AppDir/usr/bin/chvarkov \
+              | awk '/=> \// {print $3}' \
+              | grep -v '^$' \
+              | sort -u \
+              | while read lib; do
+                  cp -n "$lib" AppDir/usr/lib/ 2>/dev/null || true
+                done
+            # Recursively bundle deps of bundled libs (one level deep for GTK stack)
+            find AppDir/usr/lib -name '*.so*' -type f | while read bundled; do
+              ldd "$bundled" 2>/dev/null \
+                | awk '/=> \// {print $3}' \
+                | grep -v '^$' \
+                | while read lib; do
+                    cp -n "$lib" AppDir/usr/lib/ 2>/dev/null || true
+                  done
             done
 
             # Build AppImage (extract first to run without FUSE in container)
