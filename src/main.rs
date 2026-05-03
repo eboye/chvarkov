@@ -388,9 +388,8 @@ fn setup_actions(app: &Application) {
         if let Some(app) = app_weak_p.upgrade() {
             ACTIVE_MANAGER.with(|m| {
                 if let Some(manager) = m.borrow().as_ref() {
-                    if let Some(window) = app.active_window() {
-                        let win = window.downcast::<ApplicationWindow>().unwrap();
-                        manager.toggle_preview(&win);
+                    if let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
+                        manager.toggle_preview(&window);
                     }
                 }
             });
@@ -461,9 +460,10 @@ fn setup_actions(app: &Application) {
             action.set_state(&state);
             let _ = settings_s.set_value("show-sidebar", &state);
             if let Some(app) = app_weak_s.upgrade() {
-                 if let Some(window) = app.active_window().and_then(|w| w.downcast::<ApplicationWindow>().ok()) {
-                     let split_view = window.child().and_downcast::<OverlaySplitView>().unwrap();
-                     split_view.set_show_sidebar(state.get::<bool>().unwrap());
+                 if let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
+                     if let Some(split_view) = window.content().and_then(|w| w.downcast::<OverlaySplitView>().ok()) {
+                         split_view.set_show_sidebar(state.get::<bool>().unwrap());
+                     }
                  }
             }
         }
@@ -532,8 +532,11 @@ fn setup_actions(app: &Application) {
     zoom_in_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_zi.upgrade() {
             if let Some(action) = app.lookup_action("zoom-level") {
-                let current = action.downcast::<gio::SimpleAction>().unwrap().state().unwrap().get::<i32>().unwrap();
-                app.activate_action("zoom-level", Some(&(current + 1).to_variant()));
+                if let Some(current) = action.downcast::<gio::SimpleAction>().ok()
+                    .and_then(|a| a.state())
+                    .and_then(|s| s.get::<i32>()) {
+                    app.activate_action("zoom-level", Some(&(current + 1).to_variant()));
+                }
             }
         }
     });
@@ -545,8 +548,11 @@ fn setup_actions(app: &Application) {
     zoom_out_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_zo.upgrade() {
             if let Some(action) = app.lookup_action("zoom-level") {
-                let current = action.downcast::<gio::SimpleAction>().unwrap().state().unwrap().get::<i32>().unwrap();
-                app.activate_action("zoom-level", Some(&(current - 1).to_variant()));
+                if let Some(current) = action.downcast::<gio::SimpleAction>().ok()
+                    .and_then(|a| a.state())
+                    .and_then(|s| s.get::<i32>()) {
+                    app.activate_action("zoom-level", Some(&(current - 1).to_variant()));
+                }
             }
         }
     });
@@ -682,8 +688,8 @@ fn show_preferences_window(app: &Application) {
 }
 
 fn build_ui(app: &Application) {
-    let window = if let Some(window) = app.active_window() {
-        window.downcast::<ApplicationWindow>().unwrap()
+    let window = if let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
+        window
     } else {
         ApplicationWindow::builder()
             .application(app)
