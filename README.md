@@ -2,7 +2,7 @@
 
 **chvarkov** is a modern, high-performance file manager designed for the GNOME desktop. It brings the efficiency of macOS-style **Miller Columns** to Linux, built from the ground up using **Rust**, **GTK4**, and **Libadwaita**.
 
-![chvarkov Screenshot Placeholder]
+<img width="1112" height="659" alt="image" src="https://github.com/user-attachments/assets/06c8a9dc-f8fb-4151-8fbe-7ac5a90f8724" />
 
 ## ✨ Features
 
