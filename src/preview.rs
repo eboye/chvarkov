@@ -71,9 +71,9 @@ impl Preview {
             .build();
 
         let content_type = file_info.content_type();
-        let is_image = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "image/*")).unwrap_or(false);
-        let is_video = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "video/*")).unwrap_or(false);
-        let is_text = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "text/*")).unwrap_or(false);
+        let is_image = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "image/*")).unwrap_or(false);
+        let is_video = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "video/*")).unwrap_or(false);
+        let is_text = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "text/*")).unwrap_or(false);
 
         if is_image {
             let picture = gtk::Picture::for_filename(path);
@@ -82,7 +82,7 @@ impl Preview {
             picture.set_vexpand(true);
             picture.set_height_request(if large { 400 } else { 200 });
             container.append(&picture);
-        } else if is_video && large {
+        } else if is_video {
             let file = gio::File::for_path(path);
             let video = gtk::Video::builder()
                 .file(&file)
@@ -90,6 +90,7 @@ impl Preview {
                 .loop_(true)
                 .hexpand(true)
                 .vexpand(true)
+                .height_request(if large { 400 } else { 200 })
                 .build();
             container.append(&video);
         } else if is_text && large {
@@ -184,7 +185,7 @@ impl Preview {
             .build();
 
         let content_type = file_info.content_type();
-        let is_image = content_type.as_ref().map(|ct| gio::content_type_is_a(ct, "image/*")).unwrap_or(false);
+        let is_image = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "image/*")).unwrap_or(false);
 
         if is_image {
             let picture = gtk::Picture::for_filename(path);

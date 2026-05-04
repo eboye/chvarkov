@@ -334,3 +334,18 @@ pub fn trigger_open_action() {
         app.activate_action("open", None);
     }
 }
+
+/// Cross-platform helper to check if a content type belongs to a category.
+/// Handles both Linux MIME-style wildcards and macOS UTIs.
+pub fn is_content_type_a(ct: &str, category: &str) -> bool {
+    if gio::content_type_is_a(ct, category) {
+        return true;
+    }
+
+    match category {
+        "image/*" => gio::content_type_is_a(ct, "public.image"),
+        "video/*" => gio::content_type_is_a(ct, "public.movie") || gio::content_type_is_a(ct, "public.video"),
+        "text/*" => gio::content_type_is_a(ct, "public.text"),
+        _ => false,
+    }
+}
