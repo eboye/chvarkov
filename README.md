@@ -45,6 +45,11 @@ Download `Chvarkov-macos-aarch64.zip` from the [Releases Page](https://github.co
 brew install pkg-config gtk4 libadwaita adwaita-icon-theme gtksourceview5
 ```
 
+For **video previews** on macOS, GStreamer is also required:
+```bash
+brew install gstreamer gst-plugins-base gst-plugins-good gst-libav
+```
+
 ---
 
 ### Option A — AppImage (Linux, no dependencies)
@@ -115,10 +120,10 @@ tar -xzf chvarkov-linux-amd64.tar.gz
 
 - **Rust:** [Install Rust](https://www.rust-lang.org/tools/install)
 - **Development headers:**
-  - **macOS (Homebrew):** `brew install pkg-config gtk4 libadwaita adwaita-icon-theme gtksourceview5`
-  - **Arch Linux:** `sudo pacman -S gtk4 libadwaita gtksourceview5`
-  - **Fedora:** `sudo dnf install gtk4-devel libadwaita-devel gtksourceview5-devel`
-  - **Ubuntu/Debian:** `sudo apt install libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev`
+  - **macOS (Homebrew):** `brew install pkg-config gtk4 libadwaita adwaita-icon-theme gtksourceview5 gstreamer gst-plugins-base gst-plugins-good gst-libav`
+  - **Arch Linux:** `sudo pacman -S gtk4 libadwaita gtksourceview5 gst-plugins-good`
+  - **Fedora:** `sudo dnf install gtk4-devel libadwaita-devel gtksourceview5-devel gstreamer1-plugins-good`
+  - **Ubuntu/Debian:** `sudo apt install libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev libgstreamer1.0-dev gstreamer1.0-plugins-good`
 
 ### Install system-wide (no sudo — goes to `~/.local`)
 
