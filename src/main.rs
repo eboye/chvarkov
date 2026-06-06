@@ -1681,27 +1681,39 @@ impl ColumnManager {
     /// Called after a file is trashed or permanently deleted.
     /// Clears the current selection and collapses any child columns that were
     /// opened from the deleted path, keeping only the parent column focused.
-    pub(crate) fn on_file_deleted(&self, deleted_path: &std::path::Path) {
+    /// Called once after a batch trash/delete. Clears the focused view's selection
+    /// (so deleted rows don't stay highlighted) and collapses any columns deeper
+    /// than the shallowest affected parent. The monitored DirectoryList refreshes
+    /// the rest.
+    pub(crate) fn on_files_deleted(&self, deleted: &[std::path::PathBuf]) {
         *self.current_selection.borrow_mut() = None;
 
-        let parent = deleted_path.parent().map(|p| p.to_path_buf());
-        let keep_count = if let Some(parent_path) = &parent {
-            let entries = self.entries.borrow();
-            entries.iter().position(|e| &e.path == parent_path)
-                .map(|i| i + 1)
-                .unwrap_or(entries.len())
-        } else {
-            self.entries.borrow().len()
-        };
+        // Clear the focused view's selection model, if any.
+        if let Some(view) = self.get_focused_list_view()
+            && let Some(model) = get_selection_model(&view) {
+                model.unselect_all();
+            }
+
+        // Shallowest affected parent → how many columns to keep.
+        let mut keep_count = self.entries.borrow().len();
+        for path in deleted {
+            if let Some(parent) = path.parent() {
+                let entries = self.entries.borrow();
+                if let Some(i) = entries.iter().position(|e| e.path == parent) {
+                    keep_count = keep_count.min(i + 1);
+                }
+            }
+        }
 
         let mut entries = self.entries.borrow_mut();
         while entries.len() > keep_count {
             let entry = entries.pop().unwrap();
             self.columns_box.remove(&entry.container);
         }
+        drop(entries);
 
         self.update_preview_if_open();
-        self.update_dock(false); // hide the docked preview for the deleted selection
+        self.update_dock(false);
     }
 
     fn set_main_view(&self, view: gtk::Widget) {

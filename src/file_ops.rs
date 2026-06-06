@@ -277,9 +277,12 @@ pub fn trash(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
         for path in &paths {
             let file = gio::File::for_path(path);
             match file.trash_future(glib::Priority::DEFAULT).await {
-                Ok(_) => { done += 1; manager.on_file_deleted(path); }
+                Ok(_) => done += 1,
                 Err(_) => failed += 1,
             }
+        }
+        if done > 0 {
+            manager.on_files_deleted(&paths);
         }
         manager.send_toast(&format!(
             "Moved {done} item(s) to Trash{}",
@@ -317,9 +320,12 @@ pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBu
                 if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) }
             }).await;
             match res {
-                Ok(Ok(())) => { done += 1; manager.on_file_deleted(path); }
+                Ok(Ok(())) => done += 1,
                 _ => failed += 1,
             }
+        }
+        if done > 0 {
+            manager.on_files_deleted(&paths);
         }
         manager.send_toast(&format!(
             "Deleted {done} item(s){}",
