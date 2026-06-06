@@ -40,7 +40,9 @@ pub fn dedupe_file_name(file_name: &str, exists: impl Fn(&str) -> bool) -> Strin
 /// Return a name for a brand-new item that does not collide, per `exists`.
 /// Uses an "untitled" numbering scheme ("base", "base 2", "base 3", ...),
 /// distinct from the " (copy)" scheme used for duplicates. The number is
-/// inserted before `ext` (pass "" for no extension).
+/// inserted before `ext` (pass "" for no extension). `base` and `ext` are
+/// expected to be pre-split (ext starts with `.` or is empty).
+// TODO: remove #[allow(dead_code)] once create_folder/create_file wire this in (Task 4).
 #[allow(dead_code)]
 pub fn untitled_name(base: &str, ext: &str, exists: impl Fn(&str) -> bool) -> String {
     let first = format!("{base}{ext}");
