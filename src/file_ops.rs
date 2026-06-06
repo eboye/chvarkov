@@ -257,4 +257,28 @@ mod tests {
         assert_eq!(std::fs::read(dst.join("sub").join("f.txt")).unwrap(), b"hi");
         std::fs::remove_dir_all(&tmp).ok();
     }
+
+    #[test]
+    fn split_name_cases() {
+        assert_eq!(split_name("a.txt"), ("a".to_string(), ".txt".to_string()));
+        assert_eq!(split_name("noext"), ("noext".to_string(), String::new()));
+        assert_eq!(split_name(".bashrc"), (".bashrc".to_string(), String::new()));
+        assert_eq!(split_name("a.tar.gz"), ("a.tar".to_string(), ".gz".to_string()));
+    }
+
+    #[test]
+    fn is_cross_device_detects_exdev() {
+        assert!(is_cross_device(&std::io::Error::from_raw_os_error(18)));
+        assert!(!is_cross_device(&std::io::Error::from(std::io::ErrorKind::NotFound)));
+    }
+
+    #[test]
+    fn unique_destination_avoids_collisions() {
+        let tmp = std::env::temp_dir().join(format!("chv_ud_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x.txt"));
+        std::fs::write(tmp.join("x.txt"), b"").unwrap();
+        assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x (copy).txt"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

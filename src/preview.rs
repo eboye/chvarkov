@@ -348,8 +348,23 @@ fn add_info_row(grid: &gtk::Grid, label_text: &str, value_text: &str, row: &mut 
         .halign(gtk::Align::Start)
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .build();
-    
+
     grid.attach(&l, 0, *row, 1, 1);
     grid.attach(&v, 1, *row, 1, 1);
     *row += 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_permissions;
+
+    #[test]
+    fn permissions_strings() {
+        assert_eq!(format_permissions(0o600), "Read and Write");
+        assert_eq!(format_permissions(0o400), "Read-only");
+        assert_eq!(format_permissions(0o200), "Write-only");
+        assert_eq!(format_permissions(0o000), "No access");
+        assert_eq!(format_permissions(0o700), "Read and Write (Executable)");
+        assert_eq!(format_permissions(0o100), "No access (Executable)");
+    }
 }

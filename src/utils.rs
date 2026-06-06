@@ -56,6 +56,38 @@ mod tests {
         let none = combine_caps(std::iter::empty::<Caps>());
         assert!(!none.read && !none.delete && !none.trash);
     }
+
+    #[test]
+    fn format_size_units() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
+    }
+
+    #[test]
+    fn zoom_size_tables() {
+        assert_eq!(get_list_icon_size(0), 16);
+        assert_eq!(get_list_icon_size(4), 64);
+        assert_eq!(get_list_icon_size(99), 96);
+        assert_eq!(get_grid_icon_size(0), 48);
+        assert_eq!(get_grid_icon_size(99), 128);
+        assert_eq!(get_font_size(0), 10);
+        assert_eq!(get_font_size(99), 18);
+    }
+
+    #[test]
+    fn caps_from_info_reads_and_defaults() {
+        let info = gio::FileInfo::new();
+        info.set_attribute_boolean("access::can-read", true);
+        info.set_attribute_boolean("access::can-delete", false);
+        let c = caps_from_info(&info);
+        assert!(c.read);
+        assert!(!c.delete);
+        assert!(c.write); // unset attribute defaults to permitted (true)
+    }
 }
 
 /// Attaches a right-click (`button 3`) gesture to `widget` that opens the context menu.

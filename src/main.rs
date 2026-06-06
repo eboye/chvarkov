@@ -1643,3 +1643,25 @@ impl ColumnManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_info_path_uses_standard_file_attr() {
+        let f = gio::File::for_path("/tmp/some/nested/file.txt");
+        let info = gio::FileInfo::new();
+        info.set_attribute_object("standard::file", &f);
+        let p = file_info_path(&info, std::path::Path::new("/base"));
+        assert_eq!(p, std::path::PathBuf::from("/tmp/some/nested/file.txt"));
+    }
+
+    #[test]
+    fn file_info_path_falls_back_to_base_join_name() {
+        let info = gio::FileInfo::new();
+        info.set_name("leaf.txt");
+        let p = file_info_path(&info, std::path::Path::new("/base/dir"));
+        assert_eq!(p, std::path::PathBuf::from("/base/dir/leaf.txt"));
+    }
+}
