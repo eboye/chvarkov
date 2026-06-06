@@ -324,11 +324,57 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.paste", &["<Control>v"]);
 
     let move_to_action = gio::SimpleAction::new("move-to", None);
-    move_to_action.connect_activate(|_, _| {});
+    let move_app_weak = app.downgrade();
+    move_to_action.connect_activate(move |_, _| {
+        let Some(app) = move_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !(caps.read && caps.delete) { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                let manager_c = manager.clone();
+                let win = window.clone();
+                let dialog = gtk::FileDialog::builder().title("Move to Folder").build();
+                dialog.select_folder(Some(&window), gio::Cancellable::NONE, move |res| {
+                    if let Ok(folder) = res {
+                        if let Some(dest) = folder.path() {
+                            file_ops::transfer(manager_c.clone(), win.clone().upcast(), paths.clone(), dest, file_ops::TransferKind::Move);
+                        }
+                    }
+                });
+            }
+        });
+    });
     app.add_action(&move_to_action);
 
     let copy_to_action = gio::SimpleAction::new("copy-to", None);
-    copy_to_action.connect_activate(|_, _| {});
+    let copy_app_weak = app.downgrade();
+    copy_to_action.connect_activate(move |_, _| {
+        let Some(app) = copy_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                let manager_c = manager.clone();
+                let win = window.clone();
+                let dialog = gtk::FileDialog::builder().title("Copy to Folder").build();
+                dialog.select_folder(Some(&window), gio::Cancellable::NONE, move |res| {
+                    if let Ok(folder) = res {
+                        if let Some(dest) = folder.path() {
+                            file_ops::transfer(manager_c.clone(), win.clone().upcast(), paths.clone(), dest, file_ops::TransferKind::Copy);
+                        }
+                    }
+                });
+            }
+        });
+    });
     app.add_action(&copy_to_action);
 
     let rename_action = gio::SimpleAction::new("rename", None);
