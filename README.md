@@ -35,7 +35,7 @@
 | Action | Shortcut |
 | :--- | :--- |
 | **Quit Application** | `Ctrl` + `Q` (Linux) / `Cmd` + `Q` (macOS) |
-| **Quick Look Preview** | `Space` |
+| **Quick Look Preview** | `Space` (macOS QuickLook / GNOME Sushi when available, else built-in preview) |
 | **Toggle Sidebar** | `F9` |
 | **Toggle Hidden Files** | `Ctrl` + `H` (Linux) / `Cmd` + `H` (macOS) |
 | **Toggle Metadata** | `Ctrl` + `M` (Linux) / `Cmd` + `M` (macOS) |
