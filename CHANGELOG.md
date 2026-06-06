@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-06-06
+
+### Fixed
+- **macOS "app is damaged" error** — the `.app` is now ad-hoc code-signed, so Apple Silicon no longer rejects it outright. (It's still not notarized; clear quarantine on first launch — see the README.)
+- **Breadcrumb navigation** — clicking a breadcrumb now walks the existing Miller column chain (scrolls/focuses that column, keeping the deeper columns) instead of collapsing the whole history to a single column.
+
+### Internal
+- CI: bumped `actions/checkout`@v5, `upload-artifact`@v7, `download-artifact`@v8, and `softprops/action-gh-release`@v3 to Node 24-native versions.
+- CI: macOS builds target Apple Silicon only (GitHub retired the Intel `macos-13` hosted runner); Intel users can build from source with `./build.sh macos`.
+
+[0.4.1]: https://github.com/eboye/chvarkov/releases/tag/v0.4.1
+
 ## [0.4.0] - 2026-06-06
 
 ### Changed

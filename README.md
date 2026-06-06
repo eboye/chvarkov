@@ -61,7 +61,9 @@
 
 ### macOS (Homebrew)
 
-Download the build for your Mac from the [Releases Page](https://github.com/eboye/chvarkov/releases) — `Chvarkov-macos-aarch64.zip` for Apple Silicon (M-series) or `Chvarkov-macos-x86_64.zip` for Intel — extract it, and move `Chvarkov.app` to your `/Applications` folder.
+Download `Chvarkov-macos-aarch64.zip` (Apple Silicon / M-series) from the [Releases Page](https://github.com/eboye/chvarkov/releases), extract it, and move `Chvarkov.app` to your `/Applications` folder.
+
+> **Intel Mac?** GitHub no longer offers Intel macOS CI runners, so prebuilt Intel binaries aren't published. On an Intel Mac you can build one yourself with `./build.sh macos` (see [Building from Source](#-building-from-source)).
 
 > **"Chvarkov.app is damaged and can't be opened"?** The app is ad-hoc signed but not notarized (no paid Apple Developer account), so macOS quarantines it on download. Clear the quarantine flag once after moving it to `/Applications`:
 > ```bash
