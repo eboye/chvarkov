@@ -99,6 +99,82 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// Destination free space exceeded by `total`?
+#[allow(dead_code)] // TODO: remove when wired in Task 3
+pub fn needs_space(total: u64, free: u64) -> bool { total > free }
+
+/// Show the progress bar only for non-trivial operations.
+#[allow(dead_code)] // TODO: remove when wired in Task 3
+pub fn show_progress_for(total_bytes: u64, total_files: usize) -> bool {
+    total_bytes >= 16 * 1024 * 1024 || total_files > 100
+}
+
+/// One resolved top-level item's copy plan, grouped so a move can delete the
+/// source only if every file copied.
+#[allow(dead_code)] // TODO: remove when wired in Task 3
+pub struct ItemPlan {
+    pub dirs: Vec<PathBuf>,
+    pub files: Vec<(PathBuf, PathBuf)>,
+    pub symlinks: Vec<(PathBuf, PathBuf)>,
+}
+
+/// Build the plan for copying `src` to `dst`, adding regular-file sizes to `total`.
+/// Symlink-aware: links are recorded for recreation and never descended.
+#[allow(dead_code)] // TODO: remove when wired in Task 3
+pub fn scan_item(src: &Path, dst: &Path, total: &mut u64) -> std::io::Result<ItemPlan> {
+    let mut plan = ItemPlan { dirs: Vec::new(), files: Vec::new(), symlinks: Vec::new() };
+    fn walk(src: &Path, dst: &Path, total: &mut u64, plan: &mut ItemPlan) -> std::io::Result<()> {
+        let meta = std::fs::symlink_metadata(src)?;
+        if meta.file_type().is_symlink() {
+            plan.symlinks.push((src.to_path_buf(), dst.to_path_buf()));
+        } else if meta.is_dir() {
+            plan.dirs.push(dst.to_path_buf());
+            for entry in std::fs::read_dir(src)? {
+                let entry = entry?;
+                walk(&entry.path(), &dst.join(entry.file_name()), total, plan)?;
+            }
+        } else {
+            *total += meta.len();
+            plan.files.push((src.to_path_buf(), dst.to_path_buf()));
+        }
+        Ok(())
+    }
+    walk(src, dst, total, &mut plan)?;
+    Ok(plan)
+}
+
+/// Copy one regular file in chunks, adding written bytes to `bytes_done` and
+/// aborting (Err) if `cancel` is set between chunks. Leaves a partial `dst` on
+/// abort/error for the caller to delete.
+#[allow(dead_code)] // TODO: remove when wired in Task 3
+pub fn copy_file_chunked(src: &Path, dst: &Path, cancel: &AtomicBool, bytes_done: &AtomicU64) -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    if cancel.load(Ordering::Relaxed) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+    }
+    if let Some(parent) = dst.parent() { std::fs::create_dir_all(parent)?; }
+    let mut reader = std::fs::File::open(src)?;
+    let mut writer = std::fs::File::create(dst)?;
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+        }
+        let n = reader.read(&mut buf)?;
+        if n == 0 { break; }
+        writer.write_all(&buf[..n])?;
+        bytes_done.fetch_add(n as u64, Ordering::Relaxed);
+    }
+    writer.flush()?;
+    if let Ok(meta) = std::fs::metadata(src) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dst, std::fs::Permissions::from_mode(meta.permissions().mode()));
+    }
+    Ok(())
+}
+
 /// True if `path` equals `ancestor` or is nested under it. Inputs should be
 /// canonicalized by the caller.
 pub fn is_within(path: &Path, ancestor: &Path) -> bool {
@@ -781,6 +857,55 @@ mod tests {
         let dst = tmp.join("copied");
         copy_recursive(&link, &dst).unwrap();
         assert!(dst.symlink_metadata().unwrap().file_type().is_symlink());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn needs_space_compares() {
+        assert!(needs_space(100, 50));
+        assert!(!needs_space(50, 100));
+        assert!(!needs_space(50, 50));
+    }
+
+    #[test]
+    fn show_progress_threshold() {
+        assert!(!show_progress_for(1024, 3));               // tiny
+        assert!(show_progress_for(20 * 1024 * 1024, 1));    // > 16 MiB
+        assert!(show_progress_for(1024, 200));              // > 100 files
+    }
+
+    #[test]
+    fn scan_item_counts_tree() {
+        let tmp = std::env::temp_dir().join(format!("chv_scan_{}", std::process::id()));
+        let src = tmp.join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("a.txt"), b"hello").unwrap();          // 5 bytes
+        std::fs::write(src.join("sub").join("b.txt"), b"hi").unwrap(); // 2 bytes
+        let mut total = 0u64;
+        let item = scan_item(&src, &tmp.join("dst"), &mut total).unwrap();
+        assert_eq!(total, 7);
+        assert_eq!(item.files.len(), 2);
+        assert!(item.dirs.iter().any(|d| d.ends_with("dst")));
+        assert!(item.dirs.iter().any(|d| d.ends_with("sub")));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn copy_file_chunked_copies_and_cancels() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        let tmp = std::env::temp_dir().join(format!("chv_chunk_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("s"); let dst = tmp.join("d");
+        std::fs::write(&src, vec![7u8; 1000]).unwrap();
+        let cancel = AtomicBool::new(false);
+        let bytes = AtomicU64::new(0);
+        copy_file_chunked(&src, &dst, &cancel, &bytes).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap().len(), 1000);
+        assert_eq!(bytes.load(Ordering::Relaxed), 1000);
+        let dst2 = tmp.join("d2");
+        cancel.store(true, Ordering::Relaxed);
+        let bytes2 = AtomicU64::new(0);
+        assert!(copy_file_chunked(&src, &dst2, &cancel, &bytes2).is_err());
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
