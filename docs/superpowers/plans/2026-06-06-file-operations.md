@@ -1565,8 +1565,11 @@ Replace the `move_to_action` and `copy_to_action` bodies (lines ~249-255). Both 
         let Some(window) = app.active_window() else { return };
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                let paths: Vec<PathBuf> = manager.collect_selection().into_iter().map(|s| s.path).collect();
-                if paths.is_empty() { return; }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !(caps.read && caps.delete) { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
                 let manager_c = manager.clone();
                 let win = window.clone();
                 let dialog = gtk::FileDialog::builder().title("Move to Folder").build();
@@ -1589,8 +1592,11 @@ Replace the `move_to_action` and `copy_to_action` bodies (lines ~249-255). Both 
         let Some(window) = app.active_window() else { return };
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                let paths: Vec<PathBuf> = manager.collect_selection().into_iter().map(|s| s.path).collect();
-                if paths.is_empty() { return; }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
                 let manager_c = manager.clone();
                 let win = window.clone();
                 let dialog = gtk::FileDialog::builder().title("Copy to Folder").build();
