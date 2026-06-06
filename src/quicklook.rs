@@ -7,12 +7,11 @@ use std::process::{Command, Stdio};
 /// passed in so this is testable on any host.
 pub fn native_preview_command(path: &Path, has_qlmanage: bool, has_sushi: bool) -> Option<Vec<String>> {
     if cfg!(target_os = "macos") {
+        // Non-UTF-8 paths return None → caller falls back to the GTK preview
+        // (avoids lossy-converting and handing qlmanage a corrupted path).
         if has_qlmanage {
-            Some(vec![
-                "qlmanage".to_string(),
-                "-p".to_string(),
-                path.to_string_lossy().into_owned(),
-            ])
+            path.to_str()
+                .map(|s| vec!["qlmanage".to_string(), "-p".to_string(), s.to_string()])
         } else {
             None
         }
@@ -49,6 +48,8 @@ pub fn open_native_preview(path: &Path) -> bool {
     let Some(cmd) = it.next() else { return false };
     let args: Vec<String> = it.collect();
 
+    // Fire-and-forget: the Child handle is intentionally dropped (the native
+    // previewer owns its own window/lifecycle); we don't track or wait on it.
     Command::new(cmd)
         .args(args)
         .stdin(Stdio::null())
