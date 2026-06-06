@@ -452,9 +452,9 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.rename", &["F2"]);
 
     let new_folder_action = gio::SimpleAction::new("new-folder", None);
-    let nf_app_weak = app.downgrade();
+    let new_folder_app_weak = app.downgrade();
     new_folder_action.connect_activate(move |_, _| {
-        let Some(app) = nf_app_weak.upgrade() else { return };
+        let Some(app) = new_folder_app_weak.upgrade() else { return };
         let Some(window) = app.active_window() else { return };
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
@@ -467,9 +467,9 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.new-folder", &["<Shift><Control>n"]);
 
     let new_file_action = gio::SimpleAction::new("new-file", None);
-    let nfile_app_weak = app.downgrade();
+    let new_file_app_weak = app.downgrade();
     new_file_action.connect_activate(move |_, _| {
-        let Some(app) = nfile_app_weak.upgrade() else { return };
+        let Some(app) = new_file_app_weak.upgrade() else { return };
         let Some(window) = app.active_window() else { return };
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
@@ -1179,6 +1179,7 @@ fn build_ui(app: &Application) {
     let settings = gio::Settings::new("net.nocopypaste.chvarkov");
 
     // Responsive labels logic
+    let new_label_weak = new_btn_label.downgrade();
     let view_label_weak = view_btn_label.downgrade();
     let sort_label_weak = sort_btn_label.downgrade();
 
@@ -1188,6 +1189,7 @@ fn build_ui(app: &Application) {
         if let Some(win) = win_weak.upgrade() {
             let width = win.width();
             let show = width > 900;
+            if let Some(l) = new_label_weak.upgrade() { l.set_visible(show); }
             if let Some(l) = view_label_weak.upgrade() { l.set_visible(show); }
             if let Some(l) = sort_label_weak.upgrade() { l.set_visible(show); }
             glib::ControlFlow::Continue
@@ -1198,6 +1200,7 @@ fn build_ui(app: &Application) {
 
     // Initial check
     let initial_width = window.width();
+    new_btn_label.set_visible(initial_width > 900);
     view_btn_label.set_visible(initial_width > 900);
     sort_btn_label.set_visible(initial_width > 900);
 
