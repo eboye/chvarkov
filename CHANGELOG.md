@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-06-06
+
+### Fixed
+- **Critical:** deleting or trashing a file could act on its **parent folder** when navigating by mouse. Destructive actions now resolve the target from the column that actually holds the keyboard focus, instead of a CSS class only updated by arrow-key navigation.
+- The view-type button icon rendered as a white/broken glyph in light theme — it used a non-existent icon name (`view-column-symbolic`); now uses the correct `view-columns-symbolic`.
+
+### Added
+- A visible close button on the Quick Look (`Space`) preview window (`Esc`/`Space` still close it).
+
+[0.2.1]: https://github.com/eboye/chvarkov/releases/tag/v0.2.1
+
 ## [0.2.0] - 2026-06-06
 
 ### Added
