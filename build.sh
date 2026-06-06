@@ -179,6 +179,18 @@ build_macos() {
 </plist>
 EOF
 
+    # Ad-hoc code-sign the bundle. Unsigned arm64 binaries are rejected outright
+    # by Gatekeeper as "damaged" (with no "Open Anyway" option) once quarantined.
+    # An ad-hoc signature (`--sign -`) makes the bundle valid; this is NOT
+    # notarization, so users may still need to clear quarantine on first launch
+    # (see the README "App is damaged" note).
+    if command -v codesign >/dev/null 2>&1; then
+        info "Ad-hoc code-signing the bundle..."
+        codesign --force --deep --sign - "${APP_DIR}"
+    else
+        warn "codesign not found; skipping (the bundle will be unsigned)."
+    fi
+
     success "macOS .app ready: ${APP_DIR}"
 }
 

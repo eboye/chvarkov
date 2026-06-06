@@ -63,6 +63,12 @@
 
 Download the build for your Mac from the [Releases Page](https://github.com/eboye/chvarkov/releases) — `Chvarkov-macos-aarch64.zip` for Apple Silicon (M-series) or `Chvarkov-macos-x86_64.zip` for Intel — extract it, and move `Chvarkov.app` to your `/Applications` folder.
 
+> **"Chvarkov.app is damaged and can't be opened"?** The app is ad-hoc signed but not notarized (no paid Apple Developer account), so macOS quarantines it on download. Clear the quarantine flag once after moving it to `/Applications`:
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/Chvarkov.app
+> ```
+> Then open it normally.
+
 **Note:** You must have the system dependencies installed:
 ```bash
 brew install pkg-config gtk4 libadwaita adwaita-icon-theme gtksourceview5
