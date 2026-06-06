@@ -20,7 +20,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install system dependencies
         run: |
@@ -60,7 +60,7 @@ jobs:
             net.nocopypaste.chvarkov.svg \
             net.nocopypaste.chvarkov.metainfo.xml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: binary-tarball
           path: chvarkov-linux-amd64.tar.gz
@@ -75,7 +75,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install FUSE on host (needed to run AppImages)
         run: sudo apt-get update && sudo apt-get install -y libfuse2
@@ -156,7 +156,7 @@ jobs:
             /usr/local/bin/appimagetool --appimage-extract-and-run AppDir chvarkov-linux-amd64.AppImage
             chmod -R 777 chvarkov-linux-amd64.AppImage
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: appimage
           path: chvarkov-linux-amd64.AppImage
@@ -170,7 +170,7 @@ jobs:
       options: --privileged
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
@@ -178,7 +178,7 @@ jobs:
           manifest-path: net.nocopypaste.chvarkov.yml
           cache-key: flatpak-builder-${{ github.sha }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: flatpak-bundle
           path: chvarkov-linux-amd64.flatpak
@@ -191,7 +191,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install system dependencies
         run: |
@@ -206,7 +206,7 @@ jobs:
       - name: Compress .app bundle
         run: zip -r Chvarkov-macos-aarch64.zip Chvarkov.app
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: macos-app
           path: Chvarkov-macos-aarch64.zip
@@ -220,7 +220,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           merge-multiple: true
 
