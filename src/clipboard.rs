@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use gtk4 as gtk;
 use gtk::prelude::*;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode { Copy, Cut }
 
 #[derive(Clone)]
@@ -57,18 +57,45 @@ pub fn publish(paths: &[PathBuf], mode: Mode) {
     let _ = clipboard.set_content(Some(&provider));
 }
 
+/// First line `cut` => Mode::Cut; anything else (incl. `copy` or no verb) => Copy.
+fn clipboard_mode(text: &str) -> Mode {
+    match text.lines().next().map(str::trim) {
+        Some("cut") => Mode::Cut,
+        _ => Mode::Copy,
+    }
+}
+
 /// Best-effort read of file paths from the system clipboard (when our internal
-/// state is empty, e.g. copied from another app). Returns Copy mode by default.
+/// state is empty, e.g. copied from another app). Reads the GNOME
+/// `x-special/gnome-copied-files` MIME first so the cut/copy verb is available.
 pub fn read_external<F: Fn(Option<ClipboardOp>) + 'static>(callback: F) {
     let Some(display) = gtk::gdk::Display::default() else { callback(None); return };
     let clipboard = display.clipboard();
-    clipboard.read_text_async(gio::Cancellable::NONE, move |res| {
-        let op = res.ok().flatten().and_then(|text| {
-            let paths = parse_uri_lines(&text);
-            if paths.is_empty() { None } else { Some(ClipboardOp { mode: Mode::Copy, paths }) }
-        });
-        callback(op);
-    });
+    clipboard.read_async(
+        &["x-special/gnome-copied-files", "text/uri-list", "text/plain;charset=utf-8"],
+        glib::Priority::DEFAULT,
+        gio::Cancellable::NONE,
+        move |res| {
+            let Ok((stream, _mime)) = res else { callback(None); return };
+            // 1 MiB is far more than any realistic clipboard URI list.
+            stream.read_bytes_async(
+                1 << 20,
+                glib::Priority::DEFAULT,
+                gio::Cancellable::NONE,
+                move |res| {
+                    let Ok(bytes) = res else { callback(None); return };
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    let paths = parse_uri_lines(&text);
+                    let op = if paths.is_empty() {
+                        None
+                    } else {
+                        Some(ClipboardOp { mode: clipboard_mode(&text), paths })
+                    };
+                    callback(op);
+                },
+            );
+        },
+    );
 }
 
 #[cfg(test)]
@@ -95,5 +122,12 @@ mod tests {
     fn parse_ignores_non_file_lines() {
         let text = "copy\nfile:///tmp/x\nhttp://example.com/y\n";
         assert_eq!(parse_uri_lines(text), vec![PathBuf::from("/tmp/x")]);
+    }
+
+    #[test]
+    fn clipboard_mode_reads_verb() {
+        assert_eq!(clipboard_mode("cut\nfile:///tmp/a"), Mode::Cut);
+        assert_eq!(clipboard_mode("copy\nfile:///tmp/a"), Mode::Copy);
+        assert_eq!(clipboard_mode("file:///tmp/a"), Mode::Copy); // no verb -> Copy
     }
 }

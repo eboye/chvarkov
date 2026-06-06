@@ -151,6 +151,14 @@ pub fn transfer(
             let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
             let src_canon = src.canonicalize().ok();
 
+            // Guard: refuse to move a directory whose path can't be verified —
+            // the into-itself check would be silently skipped.
+            if src.is_dir() && src_canon.is_none() {
+                manager.send_toast(&format!("Can't verify \u{201c}{name}\u{201d}; skipped for safety"));
+                failed += 1;
+                continue;
+            }
+
             // Guard: don't place a directory inside itself or a descendant.
             if src.is_dir()
                 && let (Some(sc), Some(dc)) = (&src_canon, &dest_canon)
@@ -199,7 +207,10 @@ pub fn transfer(
                         } else {
                             let t = target.clone();
                             let removed = gio::spawn_blocking(move || {
-                                if t.is_dir() { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
+                                let is_real_dir = std::fs::symlink_metadata(&t)
+                                    .map(|m| m.file_type().is_dir())
+                                    .unwrap_or(false);
+                                if is_real_dir { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
                             }).await;
                             if !matches!(removed, Ok(Ok(()))) {
                                 manager.send_toast(&format!("Could not replace {name}"));
@@ -413,7 +424,8 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
             return Ok(()); // skip symlinks: avoids loops and out-of-tree path leakage
         }
         let rel = path.strip_prefix(base.parent().unwrap_or(base)).unwrap_or(path);
-        let name = rel.to_string_lossy().trim_start_matches('/').to_string();
+        let Some(name) = rel.to_str() else { return Ok(()); }; // skip non-UTF-8 names
+        let name = name.trim_start_matches('/').to_string();
         if meta.is_dir() {
             zip.add_directory(format!("{name}/"), *opts).map_err(std::io::Error::from)?;
             for entry in std::fs::read_dir(path)? {
@@ -437,7 +449,7 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
 /// Attach the given files to a new email via the platform's mechanism.
 pub fn email(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     use std::process::Command;
-    let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file()).collect();
+    let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file() && p.to_str().is_some()).collect();
     if paths.is_empty() { manager.send_toast("Select file(s) to share"); return; }
 
     #[cfg(target_os = "macos")]
