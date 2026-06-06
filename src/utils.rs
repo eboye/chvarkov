@@ -1,6 +1,63 @@
 use gtk4 as gtk;
 use gtk::prelude::*;
 
+/// Filesystem capabilities for a selection, from GIO `access::*` attributes.
+#[derive(Clone, Copy)]
+pub struct Caps {
+    pub read: bool,
+    pub write: bool,
+    pub execute: bool,
+    pub delete: bool,
+    pub trash: bool,
+    pub rename: bool,
+}
+
+/// Read capabilities from a FileInfo. Missing attributes default to permitted
+/// (true) so actions are not hidden spuriously.
+pub fn caps_from_info(info: &gio::FileInfo) -> Caps {
+    let get = |attr: &str| if info.has_attribute(attr) { info.boolean(attr) } else { true };
+    Caps {
+        read: get("access::can-read"),
+        write: get("access::can-write"),
+        execute: get("access::can-execute"),
+        delete: get("access::can-delete"),
+        trash: get("access::can-trash"),
+        rename: get("access::can-rename"),
+    }
+}
+
+/// AND-combine capabilities across a selection. Empty selection -> all false.
+pub fn combine_caps(items: impl IntoIterator<Item = Caps>) -> Caps {
+    let mut it = items.into_iter();
+    match it.next() {
+        None => Caps { read: false, write: false, execute: false, delete: false, trash: false, rename: false },
+        Some(first) => it.fold(first, |a, b| Caps {
+            read: a.read && b.read,
+            write: a.write && b.write,
+            execute: a.execute && b.execute,
+            delete: a.delete && b.delete,
+            trash: a.trash && b.trash,
+            rename: a.rename && b.rename,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combine_caps_ands_and_empty_is_none() {
+        let a = Caps { read: true, write: true, execute: true, delete: true, trash: true, rename: true };
+        let b = Caps { read: true, write: false, execute: true, delete: false, trash: true, rename: true };
+        let c = combine_caps([a, b]);
+        assert!(c.read && c.trash && c.rename && c.execute);
+        assert!(!c.write && !c.delete);
+        let none = combine_caps(std::iter::empty::<Caps>());
+        assert!(!none.read && !none.delete && !none.trash);
+    }
+}
+
 /// Attaches a right-click (`button 3`) gesture to `widget` that opens the context menu.
 /// Respects the Shift modifier: shows `create_context_menu_shift()` when Shift is held.
 pub fn attach_context_menu_gesture(widget: &impl gtk::prelude::IsA<gtk::Widget>) {
@@ -49,79 +106,62 @@ pub fn open_context_menu_at_center(widget: &impl gtk::prelude::IsA<gtk::Widget>)
 }
 
 pub fn create_context_menu() -> gio::Menu {
-    let menu = gio::Menu::new();
-
-    let section1 = gio::Menu::new();
-    section1.append(Some("Open"), Some("app.open"));
-    menu.append_section(None, &section1);
-
-    let section2 = gio::Menu::new();
-    section2.append(Some("Cut"), Some("app.cut"));
-    section2.append(Some("Copy"), Some("app.copy"));
-    section2.append(Some("Move to..."), Some("app.move-to"));
-    section2.append(Some("Copy to..."), Some("app.copy-to"));
-    menu.append_section(None, &section2);
-
-    let section3 = gio::Menu::new();
-    section3.append(Some("Rename..."), Some("app.rename"));
-    section3.append(Some("Create Link"), Some("app.create-link"));
-    section3.append(Some("Compress..."), Some("app.compress"));
-    section3.append(Some("Email..."), Some("app.email"));
-    section3.append(Some("Move to Trash"), Some("app.delete"));
-    section3.append(Some("Delete Permanently"), Some("app.permanent-delete"));
-    menu.append_section(None, &section3);
-
-    let section4 = gio::Menu::new();
-    section4.append(Some("Open in Terminal"), Some("app.open-terminal"));
-    section4.append(Some("Copy Path"), Some("app.copy-path"));
-    section4.append(Some("Copy URI"), Some("app.copy-uri"));
-    section4.append(Some("Copy Name"), Some("app.copy-name"));
-    section4.append(Some("Sharing Options"), Some("app.sharing-options"));
-    menu.append_section(None, &section4);
-
-    let section5 = gio::Menu::new();
-    section5.append(Some("Properties"), Some("app.properties"));
-    menu.append_section(None, &section5);
-
-    menu
+    build_context_menu(false)
 }
 
-/// Context menu variant shown when Shift is held — moves "Delete Permanently" to the top of the
-/// delete section to make the destructive action explicit.
 pub fn create_context_menu_shift() -> gio::Menu {
+    build_context_menu(true)
+}
+
+/// Build the context menu for the current selection, omitting actions the user
+/// is not permitted to perform. `shift` puts Delete Permanently above Move to Trash.
+fn build_context_menu(shift: bool) -> gio::Menu {
+    let (count, caps) = crate::selection_caps();
     let menu = gio::Menu::new();
 
-    let section1 = gio::Menu::new();
-    section1.append(Some("Open"), Some("app.open"));
-    menu.append_section(None, &section1);
+    if count >= 1 {
+        let s = gio::Menu::new();
+        s.append(Some("Open"), Some("app.open"));
+        menu.append_section(None, &s);
+    }
 
-    let section2 = gio::Menu::new();
-    section2.append(Some("Cut"), Some("app.cut"));
-    section2.append(Some("Copy"), Some("app.copy"));
-    section2.append(Some("Move to..."), Some("app.move-to"));
-    section2.append(Some("Copy to..."), Some("app.copy-to"));
-    menu.append_section(None, &section2);
+    let s2 = gio::Menu::new();
+    if count >= 1 && caps.delete { s2.append(Some("Cut"), Some("app.cut")); }
+    if count >= 1 && caps.read { s2.append(Some("Copy"), Some("app.copy")); }
+    if count >= 1 && caps.delete { s2.append(Some("Move to..."), Some("app.move-to")); }
+    if count >= 1 && caps.read { s2.append(Some("Copy to..."), Some("app.copy-to")); }
+    if s2.n_items() > 0 { menu.append_section(None, &s2); }
 
-    let section3 = gio::Menu::new();
-    section3.append(Some("Rename..."), Some("app.rename"));
-    section3.append(Some("Create Link"), Some("app.create-link"));
-    section3.append(Some("Compress..."), Some("app.compress"));
-    section3.append(Some("Email..."), Some("app.email"));
-    section3.append(Some("Delete Permanently"), Some("app.permanent-delete"));
-    section3.append(Some("Move to Trash"), Some("app.delete"));
-    menu.append_section(None, &section3);
+    let s3 = gio::Menu::new();
+    if count == 1 && caps.rename { s3.append(Some("Rename..."), Some("app.rename")); }
+    if count >= 1 && caps.read { s3.append(Some("Create Link"), Some("app.create-link")); }
+    if count >= 1 && caps.read { s3.append(Some("Compress..."), Some("app.compress")); }
+    if count >= 1 && caps.read { s3.append(Some("Email..."), Some("app.email")); }
+    if shift {
+        if count >= 1 && caps.delete { s3.append(Some("Delete Permanently"), Some("app.permanent-delete")); }
+        if count >= 1 && caps.trash { s3.append(Some("Move to Trash"), Some("app.delete")); }
+    } else {
+        if count >= 1 && caps.trash { s3.append(Some("Move to Trash"), Some("app.delete")); }
+        if count >= 1 && caps.delete { s3.append(Some("Delete Permanently"), Some("app.permanent-delete")); }
+    }
+    if s3.n_items() > 0 { menu.append_section(None, &s3); }
 
-    let section4 = gio::Menu::new();
-    section4.append(Some("Open in Terminal"), Some("app.open-terminal"));
-    section4.append(Some("Copy Path"), Some("app.copy-path"));
-    section4.append(Some("Copy URI"), Some("app.copy-uri"));
-    section4.append(Some("Copy Name"), Some("app.copy-name"));
-    section4.append(Some("Sharing Options"), Some("app.sharing-options"));
-    menu.append_section(None, &section4);
+    let s4 = gio::Menu::new();
+    if count >= 1 {
+        s4.append(Some("Open in Terminal"), Some("app.open-terminal"));
+        s4.append(Some("Copy Path"), Some("app.copy-path"));
+        s4.append(Some("Copy URI"), Some("app.copy-uri"));
+        s4.append(Some("Copy Name"), Some("app.copy-name"));
+    }
+    #[cfg(target_os = "macos")]
+    if count >= 1 && caps.read { s4.append(Some("Sharing Options"), Some("app.sharing-options")); }
+    if s4.n_items() > 0 { menu.append_section(None, &s4); }
 
-    let section5 = gio::Menu::new();
-    section5.append(Some("Properties"), Some("app.properties"));
-    menu.append_section(None, &section5);
+    if count == 1 {
+        let s5 = gio::Menu::new();
+        s5.append(Some("Properties"), Some("app.properties"));
+        menu.append_section(None, &s5);
+    }
 
     menu
 }
@@ -129,7 +169,7 @@ pub fn create_context_menu_shift() -> gio::Menu {
 pub fn get_directory_list(path: &std::path::Path) -> gtk::DirectoryList {
     let file = gio::File::for_path(path);
     gtk::DirectoryList::builder()
-        .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,time::access,time::created,unix::mode,unix::uid,unix::gid,unix::user,unix::group,standard::n-children,standard::file,thumbnail::path,thumbnail::is-valid")
+        .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,time::access,time::created,unix::mode,unix::uid,unix::gid,unix::user,unix::group,standard::n-children,standard::file,thumbnail::path,thumbnail::is-valid,access::can-read,access::can-write,access::can-execute,access::can-delete,access::can-trash,access::can-rename")
         .file(&file)
         .monitored(true)
         .io_priority(glib::Priority::DEFAULT)

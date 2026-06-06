@@ -33,7 +33,7 @@ impl ListView {
             if file_info.file_type() == gio::FileType::Directory {
                 if let Some(file) = file_info.attribute_object("standard::file").and_downcast::<gio::File>() {
                     let child_dir_list = gtk::DirectoryList::builder()
-                        .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,standard::is-symlink-target-directory,standard::n-children,standard::file")
+                        .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,standard::is-symlink-target-directory,standard::n-children,standard::file,access::can-read,access::can-write,access::can-execute,access::can-delete,access::can-trash,access::can-rename")
                         .file(&file)
                         .monitored(true)
                         .build();

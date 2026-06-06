@@ -173,6 +173,19 @@ fn setup_styles() {
     );
 }
 
+/// (selected count, AND-combined capabilities) for the focused view's selection.
+pub(crate) fn selection_caps() -> (usize, utils::Caps) {
+    ACTIVE_MANAGER.with(|m| {
+        if let Some(manager) = m.borrow().as_ref() {
+            let sel = manager.collect_selection();
+            let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+            (sel.len(), caps)
+        } else {
+            (0, utils::combine_caps(std::iter::empty()))
+        }
+    })
+}
+
 fn get_selection_model(widget: &gtk::Widget) -> Option<gtk::MultiSelection> {
     if let Ok(lv) = widget.clone().downcast::<gtk::ListView>() {
         return lv.model().and_downcast::<gtk::MultiSelection>();
@@ -1433,7 +1446,6 @@ impl ColumnManager {
     /// Gather every selected item in the currently focused view as SelectionInfo.
     /// Empty if nothing is focused/selected. Paths resolve via `standard::file`,
     /// so nested List-view rows are correct.
-    #[allow(dead_code)]
     fn collect_selection(&self) -> Vec<SelectionInfo> {
         let Some(view) = self.get_focused_list_view() else { return Vec::new() };
         let Some(sm) = get_selection_model(&view) else { return Vec::new() };
