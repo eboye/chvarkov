@@ -141,7 +141,9 @@ fn setup_styles() {
             font-weight: bold;
             margin: 0;
             padding: 0;
-            min-height: 46px; /* Match area height exactly */
+            /* No min-height here: the header already has min-height:46px. A 46px
+               label would stack on top of the header's padding and make the
+               sidebar header taller than the main header. */
         }
 
         .sidebar-footer-area, .breadcrumb-container-scrolled {
