@@ -7,15 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.1] - 2026-06-06
 
-### Added
-- **Intel (x86_64) macOS build** — releases now include `Chvarkov-macos-x86_64.zip` alongside the Apple Silicon `aarch64` build.
-
 ### Fixed
 - **macOS "app is damaged" error** — the `.app` is now ad-hoc code-signed, so Apple Silicon no longer rejects it outright. (It's still not notarized; clear quarantine on first launch — see the README.)
 - **Breadcrumb navigation** — clicking a breadcrumb now walks the existing Miller column chain (scrolls/focuses that column, keeping the deeper columns) instead of collapsing the whole history to a single column.
 
 ### Internal
 - CI: bumped `actions/checkout`@v5, `upload-artifact`@v7, `download-artifact`@v8, and `softprops/action-gh-release`@v3 to Node 24-native versions.
+- CI: macOS builds target Apple Silicon only (GitHub retired the Intel `macos-13` hosted runner); Intel users can build from source with `./build.sh macos`.
 
 [0.4.1]: https://github.com/eboye/chvarkov/releases/tag/v0.4.1
 
