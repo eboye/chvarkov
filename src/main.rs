@@ -1686,6 +1686,7 @@ impl ColumnManager {
         }
 
         self.update_preview_if_open();
+        self.update_dock(false); // hide the docked preview for the deleted selection
     }
 
     fn set_main_view(&self, view: gtk::Widget) {
