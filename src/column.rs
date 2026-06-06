@@ -14,11 +14,10 @@ impl Column {
 
         let filter = gtk::CustomFilter::new(move |item| {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
-            if !show_hidden {
-                if file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.') {
+            if !show_hidden
+                && (file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.')) {
                     return false;
                 }
-            }
             true
         });
 
@@ -108,11 +107,10 @@ impl Column {
 
             utils::set_icon_and_thumbnail(&image, &file_info);
 
-            if show_meta {
-                if let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
+            if show_meta
+                && let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
                     meta_label.set_text(&utils::format_metadata(&file_info));
                 }
-            }
         });
 
         let list_view = gtk::ListView::new(Some(selection_model.clone()), Some(factory));
@@ -140,8 +138,8 @@ impl Column {
         let sw_weak = scrolled_window.downgrade();
         let resizer_weak = resizer.downgrade();
         drag_gesture.connect_drag_update(move |gesture, offset_x, offset_y| {
-            if let (Some(sw), Some(resizer)) = (sw_weak.upgrade(), resizer_weak.upgrade()) {
-                if let Some((start_x, start_y)) = gesture.start_point() {
+            if let (Some(sw), Some(resizer)) = (sw_weak.upgrade(), resizer_weak.upgrade())
+                && let Some((start_x, start_y)) = gesture.start_point() {
                     // Pointer position in the resizer's own coordinate frame.
                     let (cur_x, cur_y) = (start_x + offset_x, start_y + offset_y);
                     // Translate it into the column's frame. The column's left edge
@@ -152,7 +150,6 @@ impl Column {
                         sw.set_width_request((width as i32).max(100));
                     }
                 }
-            }
         });
 
         resizer.add_controller(drag_gesture);

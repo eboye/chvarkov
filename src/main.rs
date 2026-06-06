@@ -227,8 +227,8 @@ fn setup_actions(app: &Application) {
     let open_action = gio::SimpleAction::new("open", None);
     open_action.connect_activate(|_, _| {
        ACTIVE_MANAGER.with(|m| {
-           if let Some(manager) = m.borrow().as_ref() {
-               if let Some(selection) = manager.current_selection.borrow().as_ref() {
+           if let Some(manager) = m.borrow().as_ref()
+               && let Some(selection) = manager.current_selection.borrow().as_ref() {
                    let file_info = &selection.file_info;
                    let path = &selection.path;
                     let is_dir = file_info.file_type() == gio::FileType::Directory || path.is_dir();
@@ -248,7 +248,6 @@ fn setup_actions(app: &Application) {
                         gio::AppInfo::launch_default_for_uri(&file.uri(), None::<&gio::AppLaunchContext>).ok();
                     }
                 }
-            }
         });
     });
     app.add_action(&open_action);
@@ -339,11 +338,10 @@ fn setup_actions(app: &Application) {
                 let win = window.clone();
                 let dialog = gtk::FileDialog::builder().title("Move to Folder").build();
                 dialog.select_folder(Some(&window), gio::Cancellable::NONE, move |res| {
-                    if let Ok(folder) = res {
-                        if let Some(dest) = folder.path() {
+                    if let Ok(folder) = res
+                        && let Some(dest) = folder.path() {
                             file_ops::transfer(manager_c.clone(), win.clone().upcast(), paths.clone(), dest, file_ops::TransferKind::Move);
                         }
-                    }
                 });
             }
         });
@@ -366,11 +364,10 @@ fn setup_actions(app: &Application) {
                 let win = window.clone();
                 let dialog = gtk::FileDialog::builder().title("Copy to Folder").build();
                 dialog.select_folder(Some(&window), gio::Cancellable::NONE, move |res| {
-                    if let Ok(folder) = res {
-                        if let Some(dest) = folder.path() {
+                    if let Ok(folder) = res
+                        && let Some(dest) = folder.path() {
                             file_ops::transfer(manager_c.clone(), win.clone().upcast(), paths.clone(), dest, file_ops::TransferKind::Copy);
                         }
-                    }
                 });
             }
         });
@@ -382,13 +379,11 @@ fn setup_actions(app: &Application) {
     rename_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_rename.upgrade() {
             ACTIVE_MANAGER.with(|m| {
-                if let Some(manager) = m.borrow().as_ref() {
-                    if let Some(selection) = manager.current_selection.borrow().as_ref() {
-                        if let Some(window) = app.active_window().and_then(|w| w.downcast::<ApplicationWindow>().ok()) {
+                if let Some(manager) = m.borrow().as_ref()
+                    && let Some(selection) = manager.current_selection.borrow().as_ref()
+                        && let Some(window) = app.active_window().and_then(|w| w.downcast::<ApplicationWindow>().ok()) {
                             show_rename_dialog(&window, manager.clone(), &selection.file_info.display_name(), selection.path.clone());
                         }
-                    }
-                }
             });
         }
     });
@@ -558,8 +553,8 @@ fn setup_actions(app: &Application) {
     properties_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_prop.upgrade() {
             ACTIVE_MANAGER.with(|m| {
-                if let Some(manager) = m.borrow().as_ref() {
-                    if let Some(selection) = manager.current_selection.borrow().as_ref() {
+                if let Some(manager) = m.borrow().as_ref()
+                    && let Some(selection) = manager.current_selection.borrow().as_ref() {
                         let file_info = &selection.file_info;
                         let path = &selection.path;
 
@@ -593,7 +588,6 @@ fn setup_actions(app: &Application) {
                             prop_window.present();
                         }
                     }
-                }
             });
         }
     });
@@ -605,11 +599,10 @@ fn setup_actions(app: &Application) {
     preview_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_p.upgrade() {
             ACTIVE_MANAGER.with(|m| {
-                if let Some(manager) = m.borrow().as_ref() {
-                    if let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
+                if let Some(manager) = m.borrow().as_ref()
+                    && let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
                         manager.toggle_preview(&window);
                     }
-                }
             });
         }
     });
@@ -620,13 +613,11 @@ fn setup_actions(app: &Application) {
     let select_all_action = gio::SimpleAction::new("select-all", None);
     select_all_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
-            if let Some(manager) = m.borrow().as_ref() {
-                if let Some(lv) = manager.get_focused_list_view() {
-                    if let Some(sm) = get_selection_model(&lv) {
+            if let Some(manager) = m.borrow().as_ref()
+                && let Some(lv) = manager.get_focused_list_view()
+                    && let Some(sm) = get_selection_model(&lv) {
                         sm.select_all();
                     }
-                }
-            }
         });
     });
     app.add_action(&select_all_action);
@@ -635,13 +626,11 @@ fn setup_actions(app: &Application) {
     let select_none_action = gio::SimpleAction::new("select-none", None);
     select_none_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
-            if let Some(manager) = m.borrow().as_ref() {
-                if let Some(lv) = manager.get_focused_list_view() {
-                    if let Some(sm) = get_selection_model(&lv) {
+            if let Some(manager) = m.borrow().as_ref()
+                && let Some(lv) = manager.get_focused_list_view()
+                    && let Some(sm) = get_selection_model(&lv) {
                         sm.unselect_all();
                     }
-                }
-            }
         });
     });
     app.add_action(&select_none_action);
@@ -650,9 +639,9 @@ fn setup_actions(app: &Application) {
     let invert_selection_action = gio::SimpleAction::new("invert-selection", None);
     invert_selection_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
-            if let Some(manager) = m.borrow().as_ref() {
-                if let Some(lv) = manager.get_focused_list_view() {
-                    if let Some(sm) = get_selection_model(&lv) {
+            if let Some(manager) = m.borrow().as_ref()
+                && let Some(lv) = manager.get_focused_list_view()
+                    && let Some(sm) = get_selection_model(&lv) {
                         let n_items = sm.n_items();
                         for i in 0..n_items {
                             if sm.is_selected(i) {
@@ -662,8 +651,6 @@ fn setup_actions(app: &Application) {
                             }
                         }
                     }
-                }
-            }
         });
     });
     app.add_action(&invert_selection_action);
@@ -675,15 +662,13 @@ fn setup_actions(app: &Application) {
     let settings_s = settings.clone();
     toggle_sidebar_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_s.set_value("show-sidebar", &state);
-            if let Some(app) = app_weak_s.upgrade() {
-                 if let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
-                     if let Some(split_view) = window.content().and_then(|w| w.downcast::<OverlaySplitView>().ok()) {
+            action.set_state(state);
+            let _ = settings_s.set_value("show-sidebar", state);
+            if let Some(app) = app_weak_s.upgrade()
+                 && let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok())
+                     && let Some(split_view) = window.content().and_then(|w| w.downcast::<OverlaySplitView>().ok()) {
                          split_view.set_show_sidebar(state.get::<bool>().unwrap());
                      }
-                 }
-            }
         }
     });
     app.add_action(&toggle_sidebar_action);
@@ -694,8 +679,8 @@ fn setup_actions(app: &Application) {
     let settings_h = settings.clone();
     show_hidden_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_h.set_value("show-hidden", &state);
+            action.set_state(state);
+            let _ = settings_h.set_value("show-hidden", state);
             if let Some(app) = app_weak_h.upgrade() {
                 glib::idle_add_local(move || {
                     app.activate();
@@ -712,8 +697,8 @@ fn setup_actions(app: &Application) {
     let settings_m = settings.clone();
     show_meta_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_m.set_value("show-meta", &state);
+            action.set_state(state);
+            let _ = settings_m.set_value("show-meta", state);
             if let Some(app) = app_weak_m.upgrade() {
                 glib::idle_add_local(move || {
                     app.activate();
@@ -731,7 +716,7 @@ fn setup_actions(app: &Application) {
     zoom_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
             let val = state.get::<i32>().unwrap();
-            if val >= 0 && val <= 5 {
+            if (0..=5).contains(&val) {
                 action.set_state(&val.to_variant());
                 let _ = settings_z.set_value("zoom-level", &val.to_variant());
                 if let Some(app) = app_weak_z.upgrade() {
@@ -748,15 +733,13 @@ fn setup_actions(app: &Application) {
     let zoom_in_action = gio::SimpleAction::new("zoom-in", None);
     let app_weak_zi = app.downgrade();
     zoom_in_action.connect_activate(move |_, _| {
-        if let Some(app) = app_weak_zi.upgrade() {
-            if let Some(action) = app.lookup_action("zoom-level") {
-                if let Some(current) = action.downcast::<gio::SimpleAction>().ok()
+        if let Some(app) = app_weak_zi.upgrade()
+            && let Some(action) = app.lookup_action("zoom-level")
+                && let Some(current) = action.downcast::<gio::SimpleAction>().ok()
                     .and_then(|a| a.state())
                     .and_then(|s| s.get::<i32>()) {
                     app.activate_action("zoom-level", Some(&(current + 1).to_variant()));
                 }
-            }
-        }
     });
     app.add_action(&zoom_in_action);
     app.set_accels_for_action("app.zoom-in", &["<Control>plus", "<Control>equal"]);
@@ -764,15 +747,13 @@ fn setup_actions(app: &Application) {
     let zoom_out_action = gio::SimpleAction::new("zoom-out", None);
     let app_weak_zo = app.downgrade();
     zoom_out_action.connect_activate(move |_, _| {
-        if let Some(app) = app_weak_zo.upgrade() {
-            if let Some(action) = app.lookup_action("zoom-level") {
-                if let Some(current) = action.downcast::<gio::SimpleAction>().ok()
+        if let Some(app) = app_weak_zo.upgrade()
+            && let Some(action) = app.lookup_action("zoom-level")
+                && let Some(current) = action.downcast::<gio::SimpleAction>().ok()
                     .and_then(|a| a.state())
                     .and_then(|s| s.get::<i32>()) {
                     app.activate_action("zoom-level", Some(&(current - 1).to_variant()));
                 }
-            }
-        }
     });
     app.add_action(&zoom_out_action);
     app.set_accels_for_action("app.zoom-out", &["<Control>minus"]);
@@ -782,8 +763,8 @@ fn setup_actions(app: &Application) {
     let settings_v = settings.clone();
     view_type_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_v.set_value("view-type", &state);
+            action.set_state(state);
+            let _ = settings_v.set_value("view-type", state);
             if let Some(app) = app_weak_v.upgrade() {
                 glib::idle_add_local(move || {
                     app.activate();
@@ -799,8 +780,8 @@ fn setup_actions(app: &Application) {
     let settings_st = settings.clone();
     sort_type_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_st.set_value("sort-type", &state);
+            action.set_state(state);
+            let _ = settings_st.set_value("sort-type", state);
             if let Some(app) = app_weak_st.upgrade() {
                 glib::idle_add_local(move || {
                     app.activate();
@@ -870,13 +851,12 @@ fn show_preferences_window(app: &Application) {
         let settings_c = settings_path.clone();
         let label_c = path_label.clone();
         dialog.select_folder(Some(&window_c), gio::Cancellable::NONE, move |res| {
-            if let Ok(folder) = res {
-                    if let Some(path) = folder.path() {
+            if let Ok(folder) = res
+                    && let Some(path) = folder.path() {
                         let path_str = path.to_string_lossy().to_string();
                         let _ = settings_c.set_string("default-path", &path_str);
                         label_c.set_label(&path_str);
                     }
-                }
             });
     });
     group.add(&default_path_row);
@@ -1334,7 +1314,7 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
 
     let dialog = adw::AlertDialog::builder()
         .heading("Rename File")
-        .body(&format!("Enter a new name for '{}':", old_name))
+        .body(format!("Enter a new name for '{}':", old_name))
         .extra_child(&entry)
         .build();
 
@@ -1448,9 +1428,8 @@ impl ColumnManager {
                 return Some(entry.path.clone());
             }
         }
-        if let Some(sel) = self.current_selection.borrow().as_ref() {
-            if let Some(parent) = sel.path.parent() { return Some(parent.to_path_buf()); }
-        }
+        if let Some(sel) = self.current_selection.borrow().as_ref()
+            && let Some(parent) = sel.path.parent() { return Some(parent.to_path_buf()); }
         let settings = gio::Settings::new("net.nocopypaste.chvarkov");
         let p: String = settings.get("current-path");
         if p.is_empty() { Some(glib::home_dir()) } else { Some(PathBuf::from(p)) }
@@ -1466,7 +1445,7 @@ impl ColumnManager {
     /// Called after a file is trashed or permanently deleted.
     /// Clears the current selection and collapses any child columns that were
     /// opened from the deleted path, keeping only the parent column focused.
-    pub(crate) fn on_file_deleted(&self, deleted_path: &PathBuf) {
+    pub(crate) fn on_file_deleted(&self, deleted_path: &std::path::Path) {
         *self.current_selection.borrow_mut() = None;
 
         let parent = deleted_path.parent().map(|p| p.to_path_buf());
@@ -1592,8 +1571,8 @@ impl ColumnManager {
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::Up | gtk::gdk::Key::Down => {
-                    if let Some(lv) = manager_key_clone.get_focused_list_view() {
-                        if let Some(sm) = get_selection_model(&lv) {
+                    if let Some(lv) = manager_key_clone.get_focused_list_view()
+                        && let Some(sm) = get_selection_model(&lv) {
                             let selection = sm.selection();
                             if !selection.is_empty() {
                                  let current = selection.minimum();
@@ -1604,7 +1583,6 @@ impl ColumnManager {
                                  }
                             }
                         }
-                    }
                     glib::Propagation::Stop
                 }
                 _ => glib::Propagation::Proceed,
@@ -1623,11 +1601,10 @@ impl ColumnManager {
             }
         }
         // 2. Check active Icon/List view
-        if let Some(main) = self.main_view.borrow().as_ref() {
-            if main.has_css_class("focused-grid") || main.has_css_class("focused-list") {
+        if let Some(main) = self.main_view.borrow().as_ref()
+            && (main.has_css_class("focused-grid") || main.has_css_class("focused-list")) {
                 return Some(main.clone());
             }
-        }
         None
     }
 
@@ -1674,12 +1651,11 @@ impl ColumnManager {
     }
 
     fn update_preview_if_open(&self) {
-        if let Some(window) = self.preview_window.borrow().as_ref() {
-            if let Some(selection) = self.current_selection.borrow().as_ref() {
+        if let Some(window) = self.preview_window.borrow().as_ref()
+            && let Some(selection) = self.current_selection.borrow().as_ref() {
                 let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
                 window.set_content(Some(&preview_layout));
             }
-        }
     }
 
     fn add_column(&self, path: PathBuf, index: usize) -> Option<gtk::ListView> {
@@ -1761,8 +1737,8 @@ impl ColumnManager {
                     target.grab_focus();
                     return glib::Propagation::Stop;
                 }
-            } else if key == gtk::gdk::Key::Left {
-                if index > 0 {
+            } else if key == gtk::gdk::Key::Left
+                && index > 0 {
                     let entries = self_key_clone.entries.borrow();
                     list_view_focus.remove_css_class("focused-column");
                     let target_entry = &entries[index - 1];
@@ -1777,7 +1753,6 @@ impl ColumnManager {
 
                     return glib::Propagation::Stop;
                 }
-            }
             glib::Propagation::Proceed
         });
         list_view.add_controller(key_controller);
@@ -1785,7 +1760,7 @@ impl ColumnManager {
         Some(list_view)
     }
 
-    fn handle_selection_change_multi(&self, selection_model: &gtk::MultiSelection, base_path: &PathBuf, index: usize) {
+    fn handle_selection_change_multi(&self, selection_model: &gtk::MultiSelection, base_path: &std::path::Path, index: usize) {
         let selection = selection_model.selection();
         if selection.is_empty() {
             *self.current_selection.borrow_mut() = None;

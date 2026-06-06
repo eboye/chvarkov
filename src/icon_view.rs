@@ -13,11 +13,10 @@ impl IconView {
 
         let filter = gtk::CustomFilter::new(move |item| {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
-            if !show_hidden {
-                if file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.') {
+            if !show_hidden
+                && (file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.')) {
                     return false;
                 }
-            }
             true
         });
 
@@ -97,11 +96,10 @@ impl IconView {
 
             utils::set_icon_and_thumbnail(&image, &file_info);
 
-            if show_meta {
-                if let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
+            if show_meta
+                && let Some(meta_label) = label.next_sibling().and_then(|w| w.downcast::<gtk::Label>().ok()) {
                     meta_label.set_text(&utils::format_metadata(&file_info));
                 }
-            }
         });
 
         let grid_view = gtk::GridView::builder()

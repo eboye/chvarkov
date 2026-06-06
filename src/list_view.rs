@@ -13,11 +13,10 @@ impl ListView {
 
         let filter = gtk::CustomFilter::new(move |item| {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
-            if !show_hidden {
-                if file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.') {
+            if !show_hidden
+                && (file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.')) {
                     return false;
                 }
-            }
             true
         });
 
@@ -30,8 +29,8 @@ impl ListView {
         // Tree Model for nested expansion
         let tree_model = gtk::TreeListModel::new(sort_model, false, false, move |item| {
             let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
-            if file_info.file_type() == gio::FileType::Directory {
-                if let Some(file) = file_info.attribute_object("standard::file").and_downcast::<gio::File>() {
+            if file_info.file_type() == gio::FileType::Directory
+                && let Some(file) = file_info.attribute_object("standard::file").and_downcast::<gio::File>() {
                     let child_dir_list = gtk::DirectoryList::builder()
                         .attributes("standard::name,standard::display-name,standard::icon,standard::type,standard::is-hidden,standard::size,standard::content-type,time::modified,standard::is-symlink-target-directory,standard::n-children,standard::file,access::can-read,access::can-write,access::can-execute,access::can-delete,access::can-trash,access::can-rename")
                         .file(&file)
@@ -40,11 +39,10 @@ impl ListView {
 
                     let child_filter = gtk::CustomFilter::new(move |item| {
                         let info = item.downcast_ref::<gio::FileInfo>().unwrap();
-                        if !show_hidden {
-                            if info.is_hidden() || info.name().to_string_lossy().starts_with('.') {
+                        if !show_hidden
+                            && (info.is_hidden() || info.name().to_string_lossy().starts_with('.')) {
                                 return false;
                             }
-                        }
                         true
                     });
 
@@ -54,7 +52,6 @@ impl ListView {
 
                     return Some(child_sort_model.upcast());
                 }
-            }
             None
         });
 
@@ -245,12 +242,11 @@ impl ListView {
                         tree_row.set_expanded(true);
                         return glib::Propagation::Stop;
                     }
-                } else if key == gtk::gdk::Key::Left {
-                    if tree_row.is_expanded() {
+                } else if key == gtk::gdk::Key::Left
+                    && tree_row.is_expanded() {
                         tree_row.set_expanded(false);
                         return glib::Propagation::Stop;
                     }
-                }
             }
             glib::Propagation::Proceed
         });

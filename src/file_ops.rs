@@ -9,11 +9,10 @@ use crate::ColumnManager;
 /// Split a file name into (stem, extension-with-dot). Leading-dot files
 /// (".bashrc") are treated as having no extension.
 fn split_name(file_name: &str) -> (String, String) {
-    if let Some(idx) = file_name.rfind('.') {
-        if idx > 0 {
+    if let Some(idx) = file_name.rfind('.')
+        && idx > 0 {
             return (file_name[..idx].to_string(), file_name[idx..].to_string());
         }
-    }
     (file_name.to_string(), String::new())
 }
 
@@ -122,15 +121,13 @@ pub fn transfer(
             let src_canon = src.canonicalize().ok();
 
             // Guard: don't place a directory inside itself or a descendant.
-            if src.is_dir() {
-                if let (Some(sc), Some(dc)) = (&src_canon, &dest_canon) {
-                    if is_within(dc, sc) {
+            if src.is_dir()
+                && let (Some(sc), Some(dc)) = (&src_canon, &dest_canon)
+                    && is_within(dc, sc) {
                         manager.send_toast(&format!("Can't place \u{201c}{name}\u{201d} inside itself"));
                         failed += 1;
                         continue;
                     }
-                }
-            }
 
             let mut target = dest_dir.join(&name);
 
@@ -336,11 +333,10 @@ pub fn open_terminal(manager: Rc<ColumnManager>, dir: PathBuf) {
 
 /// Choose the archive file name for a selection.
 pub fn archive_name(paths: &[PathBuf]) -> String {
-    if paths.len() == 1 {
-        if let Some(name) = paths[0].file_name().and_then(|n| n.to_str()) {
+    if paths.len() == 1
+        && let Some(name) = paths[0].file_name().and_then(|n| n.to_str()) {
             return format!("{name}.zip");
         }
-    }
     "Archive.zip".to_string()
 }
 

@@ -1,7 +1,6 @@
 use libadwaita as adw;
 use adw::prelude::*;
 use gtk4 as gtk;
-use glib;
 use std::path::PathBuf;
 
 pub struct Sidebar {

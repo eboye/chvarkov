@@ -343,12 +343,11 @@ pub fn set_icon_and_thumbnail(image: &gtk::Image, file_info: &gio::FileInfo) {
         icon_set = true;
     }
 
-    if !icon_set {
-        if let Some(icon) = file_info.icon() {
+    if !icon_set
+        && let Some(icon) = file_info.icon() {
             image.set_from_gicon(&icon);
             image.remove_css_class("thumbnail");
         }
-    }
 }
 
 /// Sets up common view controllers:

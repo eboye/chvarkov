@@ -30,8 +30,8 @@ impl Preview {
         let sw_weak = scrolled_window.downgrade();
         let resizer_weak = resizer.downgrade();
         drag_gesture.connect_drag_update(move |gesture, offset_x, offset_y| {
-            if let (Some(sw), Some(resizer)) = (sw_weak.upgrade(), resizer_weak.upgrade()) {
-                if let Some((start_x, start_y)) = gesture.start_point() {
+            if let (Some(sw), Some(resizer)) = (sw_weak.upgrade(), resizer_weak.upgrade())
+                && let Some((start_x, start_y)) = gesture.start_point() {
                     // Pointer position in the resizer's own coordinate frame.
                     let (cur_x, cur_y) = (start_x + offset_x, start_y + offset_y);
                     // Translate it into the pane's frame. The pane's left edge stays
@@ -42,7 +42,6 @@ impl Preview {
                         sw.set_width_request((width as i32).max(100));
                     }
                 }
-            }
         });
 
         resizer.add_controller(drag_gesture);
@@ -156,11 +155,10 @@ impl Preview {
         let size_str = glib::format_size(size as u64);
         add_info_row(&grid, "Size", &size_str, &mut row);
 
-        if let Some(date_time) = file_info.modification_date_time() {
-            if let Ok(formatted) = date_time.format("%Y-%m-%d %H:%M") {
+        if let Some(date_time) = file_info.modification_date_time()
+            && let Ok(formatted) = date_time.format("%Y-%m-%d %H:%M") {
                 add_info_row(&grid, "Modified", &formatted, &mut row);
             }
-        }
 
         container.append(&grid);
         container
@@ -214,7 +212,7 @@ impl Preview {
             .unwrap_or_else(|| "Unknown".to_string());
         
         let sub_label = gtk::Label::builder()
-            .label(&format!("{} | {}", type_desc, glib::format_size(file_info.size() as u64)))
+            .label(format!("{} | {}", type_desc, glib::format_size(file_info.size() as u64)))
             .halign(gtk::Align::Center)
             .css_classes(["dim-label"])
             .build();
@@ -234,31 +232,26 @@ impl Preview {
         details_group.add(&parent_row);
 
         let access_time = file_info.attribute_uint64("time::access");
-        if access_time > 0 {
-            if let Ok(dt) = glib::DateTime::from_unix_local(access_time as i64) {
-                if let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
+        if access_time > 0
+            && let Ok(dt) = glib::DateTime::from_unix_local(access_time as i64)
+                && let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
                     let row = adw::ActionRow::builder().title("Accessed").subtitle(formatted).build();
                     details_group.add(&row);
                 }
-            }
-        }
 
-        if let Some(dt) = file_info.modification_date_time() {
-            if let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
+        if let Some(dt) = file_info.modification_date_time()
+            && let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
                 let row = adw::ActionRow::builder().title("Modified").subtitle(formatted).build();
                 details_group.add(&row);
             }
-        }
 
         let create_time = file_info.attribute_uint64("time::created");
-        if create_time > 0 {
-            if let Ok(dt) = glib::DateTime::from_unix_local(create_time as i64) {
-                if let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
+        if create_time > 0
+            && let Ok(dt) = glib::DateTime::from_unix_local(create_time as i64)
+                && let Ok(formatted) = dt.format("%d/%m/%Y, %H:%M:%S") {
                     let row = adw::ActionRow::builder().title("Created").subtitle(formatted).build();
                     details_group.add(&row);
                 }
-            }
-        }
 
         container.append(&details_group);
 
