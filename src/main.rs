@@ -396,7 +396,18 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.rename", &["F2"]);
 
     let create_link_action = gio::SimpleAction::new("create-link", None);
-    create_link_action.connect_activate(|_, _| {});
+    create_link_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::symlink(manager.clone(), paths);
+            }
+        });
+    });
     app.add_action(&create_link_action);
     app.set_accels_for_action("app.create-link", &["<Shift><Control>m"]);
 

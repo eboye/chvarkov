@@ -305,6 +305,25 @@ pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBu
     });
 }
 
+/// Create a symlink named "<name> link" beside each source (numbered on collision).
+pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
+    let mut made = 0usize;
+    for src in &paths {
+        let Some(dir) = src.parent() else { continue };
+        let Some(name) = src.file_name().and_then(|n| n.to_str()) else { continue };
+        let link_name = dedupe_file_name(&format!("{name} link"), |n| dir.join(n).exists());
+        let link_path = dir.join(link_name);
+        match std::os::unix::fs::symlink(src, &link_path) {
+            Ok(()) => made += 1,
+            Err(e) => manager.send_toast(&format!("Link failed: {e}")),
+        }
+    }
+    if made > 0 {
+        manager.send_toast(&format!("Created {made} link(s)"));
+        manager.refresh();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
