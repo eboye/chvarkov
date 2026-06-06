@@ -1,4 +1,10 @@
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use gtk4 as gtk;
+use gtk::prelude::*;
+use libadwaita as adw;
+use adw::prelude::*;
+use crate::ColumnManager;
 
 /// Split a file name into (stem, extension-with-dot). Leading-dot files
 /// (".bashrc") are treated as having no extension.
@@ -59,12 +65,10 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
-use std::rc::Rc;
-use gtk4 as gtk;
-use gtk::prelude::*;
-use libadwaita as adw;
-use adw::prelude::*;
-use crate::ColumnManager;
+/// True if a rename failed because source and destination are on different filesystems.
+fn is_cross_device(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::CrossesDevices || e.raw_os_error() == Some(18) // EXDEV
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -84,6 +88,7 @@ pub fn transfer(
         let mut apply_to_all: Option<&'static str> = None; // "replace" | "skip" | "keep"
         let mut done = 0usize;
         let mut skipped = 0usize;
+        let mut failed = 0usize;
 
         for src in sources {
             let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
@@ -101,11 +106,16 @@ pub fn transfer(
                 match choice {
                     "skip" => { skipped += 1; continue; }
                     "keep" => { target = unique_destination(&dest_dir, &name); }
-                    _ => { /* replace: remove existing first */
+                    _ => { // replace: remove existing first
                         let t = target.clone();
-                        let _ = gio::spawn_blocking(move || {
+                        let removed = gio::spawn_blocking(move || {
                             if t.is_dir() { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
                         }).await;
+                        if !matches!(removed, Ok(Ok(()))) {
+                            manager.send_toast(&format!("Could not replace {name}"));
+                            failed += 1;
+                            continue;
+                        }
                     }
                 }
             }
@@ -116,12 +126,14 @@ pub fn transfer(
                 match kind {
                     TransferKind::Copy => copy_recursive(&src_c, &target_c),
                     TransferKind::Move => {
+                        // Fast rename; only fall back to copy+delete across filesystems.
                         match std::fs::rename(&src_c, &target_c) {
                             Ok(()) => Ok(()),
-                            Err(_) => {
+                            Err(e) if is_cross_device(&e) => {
                                 copy_recursive(&src_c, &target_c)?;
                                 if src_c.is_dir() { std::fs::remove_dir_all(&src_c) } else { std::fs::remove_file(&src_c) }
                             }
+                            Err(e) => Err(e),
                         }
                     }
                 }
@@ -129,12 +141,15 @@ pub fn transfer(
 
             match res {
                 Ok(Ok(())) => done += 1,
-                _ => manager.send_toast(&format!("Failed to transfer {name}")),
+                _ => { failed += 1; manager.send_toast(&format!("Failed to transfer {name}")); }
             }
         }
 
         let verb = if kind == TransferKind::Move { "Moved" } else { "Copied" };
-        manager.send_toast(&format!("{verb} {done} item(s){}", if skipped > 0 { format!(", skipped {skipped}") } else { String::new() }));
+        let mut extra = String::new();
+        if skipped > 0 { extra.push_str(&format!(", skipped {skipped}")); }
+        if failed > 0 { extra.push_str(&format!(", {failed} failed")); }
+        manager.send_toast(&format!("{verb} {done} item(s){extra}"));
         manager.refresh();
     });
 }
@@ -168,32 +183,42 @@ async fn ask_conflict(parent: &gtk::Window, name: &str) -> (&'static str, bool) 
     (choice, check.is_active())
 }
 
-/// Move a batch of paths to the trash.
+/// Move a batch of paths to the trash. One summary toast; collapses columns per success.
 pub fn trash(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
-    for path in paths {
-        let file = gio::File::for_path(&path);
-        let manager_c = manager.clone();
-        file.trash_async(glib::Priority::DEFAULT, gio::Cancellable::NONE, move |res| {
-            match res {
-                Ok(_) => { manager_c.send_toast("Moved to Trash"); manager_c.on_file_deleted(&path); }
-                Err(e) => manager_c.send_toast(&format!("Error moving to trash: {e}")),
+    glib::spawn_future_local(async move {
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for path in &paths {
+            let file = gio::File::for_path(path);
+            match file.trash_future(glib::Priority::DEFAULT).await {
+                Ok(_) => { done += 1; manager.on_file_deleted(path); }
+                Err(_) => failed += 1,
             }
-        });
-    }
+        }
+        manager.send_toast(&format!(
+            "Moved {done} item(s) to Trash{}",
+            if failed > 0 { format!(", {failed} failed") } else { String::new() }
+        ));
+    });
 }
 
-/// Permanently delete a batch of paths.
+/// Permanently delete a batch of paths. One summary toast; collapses columns per success.
 pub fn delete(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
-    for path in paths {
-        let file = gio::File::for_path(&path);
-        let manager_c = manager.clone();
-        file.delete_async(glib::Priority::DEFAULT, gio::Cancellable::NONE, move |res| {
-            match res {
-                Ok(_) => { manager_c.send_toast("Deleted permanently"); manager_c.on_file_deleted(&path); }
-                Err(e) => manager_c.send_toast(&format!("Error deleting: {e}")),
+    glib::spawn_future_local(async move {
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for path in &paths {
+            let file = gio::File::for_path(path);
+            match file.delete_future(glib::Priority::DEFAULT).await {
+                Ok(_) => { done += 1; manager.on_file_deleted(path); }
+                Err(_) => failed += 1,
             }
-        });
-    }
+        }
+        manager.send_toast(&format!(
+            "Deleted {done} item(s){}",
+            if failed > 0 { format!(", {failed} failed") } else { String::new() }
+        ));
+    });
 }
 
 #[cfg(test)]
