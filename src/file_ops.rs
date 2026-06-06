@@ -431,11 +431,94 @@ pub fn email(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     }
 }
 
-/// Share files. Delegates to email (the reliable cross-platform target); a
-/// native macOS NSSharingServicePicker could replace this if NSView anchoring
-/// from the GTK window is solved.
-pub fn share(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
+/// Share files. On macOS, presents the native `NSSharingServicePicker` anchored
+/// to the app window; if that cannot be presented it falls back to `email`. On
+/// other platforms it delegates straight to `email`.
+#[cfg(target_os = "macos")]
+pub fn share(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBuf>) {
+    if !show_share_sheet(&parent, &paths) {
+        email(manager, paths);
+    }
+}
+
+/// Share files (non-macOS): delegate to the email mechanism.
+#[cfg(not(target_os = "macos"))]
+pub fn share(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBuf>) {
+    let _ = &parent;
     email(manager, paths);
+}
+
+/// Present the native macOS Share sheet for the given files anchored to the
+/// content view of `parent`'s `NSWindow`. Returns `false` (without presenting)
+/// if there are no existing files or the native window cannot be resolved, so
+/// the caller can fall back to `email`. This is `unsafe` Obj-C FFI; every step
+/// is guarded so it can never panic.
+#[cfg(target_os = "macos")]
+fn show_share_sheet(parent: &gtk::Window, paths: &[PathBuf]) -> bool {
+    use gtk::prelude::NativeExt;
+    use gdk4_macos::MacosSurface;
+    use objc2::AnyThread;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSSharingServicePicker, NSWindow};
+    use objc2_foundation::{NSArray, NSRectEdge, NSString, NSURL};
+
+    // Only share files that actually exist on disk.
+    let files: Vec<&PathBuf> = paths.iter().filter(|p| p.is_file()).collect();
+    if files.is_empty() {
+        return false;
+    }
+
+    // Build NSURL file URLs from the paths. Skip any path that is not valid UTF-8.
+    let mut urls: Vec<Retained<NSURL>> = Vec::with_capacity(files.len());
+    for p in &files {
+        let Some(s) = p.to_str() else { continue };
+        let ns = NSString::from_str(s);
+        let url = NSURL::fileURLWithPath(&ns);
+        urls.push(url);
+    }
+    if urls.is_empty() {
+        return false;
+    }
+
+    // Resolve the underlying NSWindow* from the GTK window's GDK surface.
+    let surface = parent.surface();
+    let Some(surface) = surface else { return false };
+    let Ok(macos_surface) = surface.downcast::<MacosSurface>() else {
+        return false;
+    };
+    let win_ptr = macos_surface.native();
+    if win_ptr.is_null() {
+        return false;
+    }
+
+    // SAFETY: `native()` hands us a borrowed `NSWindow*`. We take a retained
+    // reference so the object stays alive for the duration of this call.
+    let window: Retained<NSWindow> = match unsafe { Retained::retain(win_ptr.cast()) } {
+        Some(w) => w,
+        None => return false,
+    };
+
+    // `contentView` returns the window's content view (or nil).
+    let Some(view) = window.contentView() else {
+        return false;
+    };
+
+    // Build the picker over the file URLs (each NSURL is a shareable item).
+    // `initWithItems:` wants an untyped `NSArray` (of `AnyObject`), so collect
+    // the URLs as type-erased object references.
+    let objects: Vec<&AnyObject> = urls.iter().map(|u| AsRef::<AnyObject>::as_ref(&**u)).collect();
+    let items: Retained<NSArray<AnyObject>> = NSArray::from_slice(&objects);
+    // SAFETY: `initWithItems:` takes ownership of the allocated picker and reads
+    // the items array; both are valid here.
+    let picker =
+        unsafe { NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), &items) };
+
+    let bounds = view.bounds();
+    // Present the share sheet relative to the content view's bounds.
+    picker.showRelativeToRect_ofView_preferredEdge(bounds, &view, NSRectEdge::MinY);
+
+    true
 }
 
 /// Create a symlink named "<name> link" beside each source (numbered on collision).
