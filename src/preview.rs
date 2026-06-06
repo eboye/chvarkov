@@ -142,7 +142,9 @@ impl Preview {
             .build();
 
         let content_type = file_info.content_type();
-        let is_image = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "image/*")).unwrap_or(false);
+        // Gate on regular files so a FIFO/socket/device never blocks on Picture load.
+        let is_image = file_info.file_type() == gio::FileType::Regular
+            && content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "image/*")).unwrap_or(false);
 
         if is_image {
             let picture = gtk::Picture::for_filename(path);

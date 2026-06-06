@@ -1948,6 +1948,11 @@ impl ColumnManager {
     fn update_preview_if_open(&self) {
         if let Some(window) = self.preview_window.borrow().as_ref()
             && let Some(selection) = self.current_selection.borrow().as_ref() {
+                // Stop the outgoing video before swapping content (the Quick Look
+                // window autoplays, so arrowing files would otherwise leave it playing).
+                if let Some(old) = window.content() {
+                    Self::stop_video_in(&old);
+                }
                 let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
                 let toolbar_view = adw::ToolbarView::builder().content(&preview_layout).build();
                 toolbar_view.add_top_bar(&adw::HeaderBar::new());
@@ -1960,21 +1965,19 @@ impl ColumnManager {
         *self.preview_dock_content.borrow_mut() = Some(content);
     }
 
-    /// Walk the widget tree inside a dock `ScrolledWindow` and stop any
-    /// `GtkVideo` that is currently playing, so the media stream is released
-    /// before the widget is dropped.
-    fn stop_dock_video(content: &ScrolledWindow) {
-        if let Some(child) = content.child() {
-            let mut stack = vec![child];
-            while let Some(w) = stack.pop() {
-                if let Ok(video) = w.clone().downcast::<gtk::Video>() {
-                    video.set_media_stream(None::<&gtk::MediaStream>);
-                }
-                let mut c = w.first_child();
-                while let Some(node) = c {
-                    stack.push(node.clone());
-                    c = node.next_sibling();
-                }
+    /// Walk `root` and its descendants and stop any `GtkVideo`'s media stream, so
+    /// playback ends and the stream is released before the widget is replaced or
+    /// dropped (used for both the docked pane and the Quick Look window).
+    fn stop_video_in(root: &impl IsA<gtk::Widget>) {
+        let mut stack = vec![root.clone().upcast::<gtk::Widget>()];
+        while let Some(w) = stack.pop() {
+            if let Ok(video) = w.clone().downcast::<gtk::Video>() {
+                video.set_media_stream(None::<&gtk::MediaStream>);
+            }
+            let mut c = w.first_child();
+            while let Some(node) = c {
+                stack.push(node.clone());
+                c = node.next_sibling();
             }
         }
     }
@@ -1989,12 +1992,12 @@ impl ColumnManager {
         if show
             && let Some(sel) = self.current_selection.borrow().as_ref() {
                 let layout = Preview::create_preview_layout(&sel.file_info, &sel.path, false);
-                Self::stop_dock_video(&content);
+                Self::stop_video_in(&content);
                 content.set_child(Some(&layout));
                 container.set_visible(true);
                 return;
             }
-        Self::stop_dock_video(&content);
+        Self::stop_video_in(&content);
         content.set_child(None::<&gtk::Widget>);
         container.set_visible(false);
     }
