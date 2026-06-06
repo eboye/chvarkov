@@ -1355,36 +1355,49 @@ fn build_ui(app: &Application) {
     window.present();
 }
 
-fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, old_name_str: &str, path: PathBuf) {
-    let old_name = old_name_str.to_string();
+/// Generic "enter a name" dialog. Validates and renames `path` on disk via
+/// `set_display_name_async` when confirmed. The entry text is pre-selected so
+/// typing replaces it. Confirm response id is "confirm".
+pub(crate) fn show_name_dialog(
+    parent: &impl IsA<gtk::Widget>,
+    manager: Rc<ColumnManager>,
+    heading: &str,
+    body: &str,
+    confirm_label: &str,
+    initial: &str,
+    path: PathBuf,
+) {
+    let initial = initial.to_string();
     let entry = gtk::Entry::builder()
-        .text(&old_name)
+        .text(&initial)
         .activates_default(true)
         .margin_top(12)
         .margin_bottom(12)
         .margin_start(12)
         .margin_end(12)
         .build();
+    // Clone for the post-present selection closure (the response closure moves `entry`).
+    let entry_sel = entry.clone();
 
     let dialog = adw::AlertDialog::builder()
-        .heading("Rename File")
-        .body(format!("Enter a new name for '{}':", old_name))
+        .heading(heading)
+        .body(body)
         .extra_child(&entry)
         .build();
 
     dialog.add_response("cancel", "Cancel");
-    dialog.add_response("rename", "Rename");
-    dialog.set_default_response(Some("rename"));
+    dialog.add_response("confirm", confirm_label);
+    dialog.set_default_response(Some("confirm"));
     dialog.set_close_response("cancel");
-    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Suggested);
 
     let path_clone = path.clone();
     let manager_c = manager.clone();
-    let old_name_c = old_name.clone();
+    let initial_c = initial.clone();
     dialog.connect_response(None, move |_d, response| {
-        if response == "rename" {
+        if response == "confirm" {
             let new_name = entry.text().to_string();
-            if new_name != old_name_c {
+            if new_name != initial_c {
                 if let Err(reason) = file_ops::validate_filename(&new_name) {
                     manager_c.send_toast(&reason);
                     return;
@@ -1396,22 +1409,34 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
                     &new_name,
                     glib::Priority::DEFAULT,
                     gio::Cancellable::NONE,
-                    move |res| {
-                        match res {
-                            Ok(_) => {
-                                manager_inner.send_toast(&format!("Renamed to {}", name_to_report));
-                            },
-                            Err(e) => {
-                                manager_inner.send_toast(&format!("Error: {}", e));
-                            }
-                        }
-                    }
+                    move |res| match res {
+                        Ok(_) => manager_inner.send_toast(&format!("Renamed to {}", name_to_report)),
+                        Err(e) => manager_inner.send_toast(&format!("Error: {}", e)),
+                    },
                 );
             }
         }
     });
 
     dialog.present(Some(parent));
+
+    // Pre-select the name after the dialog is mapped so typing replaces it.
+    glib::idle_add_local_once(move || {
+        entry_sel.grab_focus();
+        entry_sel.select_region(0, -1);
+    });
+}
+
+fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, old_name_str: &str, path: PathBuf) {
+    show_name_dialog(
+        parent,
+        manager,
+        "Rename File",
+        &format!("Enter a new name for '{}':", old_name_str),
+        "Rename",
+        old_name_str,
+        path,
+    );
 }
 
 
