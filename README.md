@@ -61,7 +61,7 @@
 
 ### macOS (Homebrew)
 
-Download `Chvarkov-macos-aarch64.zip` from the [Releases Page](https://github.com/eboye/chvarkov/releases), extract it, and move `Chvarkov.app` to your `/Applications` folder.
+Download the build for your Mac from the [Releases Page](https://github.com/eboye/chvarkov/releases) — `Chvarkov-macos-aarch64.zip` for Apple Silicon (M-series) or `Chvarkov-macos-x86_64.zip` for Intel — extract it, and move `Chvarkov.app` to your `/Applications` folder.
 
 **Note:** You must have the system dependencies installed:
 ```bash

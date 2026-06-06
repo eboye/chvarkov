@@ -183,12 +183,20 @@ jobs:
           name: flatpak-bundle
           path: chvarkov-linux-amd64.flatpak
 
-  # ── 4. macOS ───────────────────────────────────────────────────────────────
+  # ── 4. macOS (Apple Silicon + Intel) ─────────────────────────────────────────
   macos:
-    name: Build macOS .app
-    runs-on: macos-latest
+    name: Build macOS .app (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-latest   # Apple Silicon
+          - arch: x86_64
+            runner: macos-13       # Intel
 
     steps:
       - uses: actions/checkout@v5
@@ -199,17 +207,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
 
       - name: Build macOS .app
         run: ./build.sh macos
 
       - name: Compress .app bundle
-        run: zip -r Chvarkov-macos-aarch64.zip Chvarkov.app
+        run: zip -r Chvarkov-macos-${{ matrix.arch }}.zip Chvarkov.app
 
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-app
-          path: Chvarkov-macos-aarch64.zip
+          name: macos-app-${{ matrix.arch }}
+          path: Chvarkov-macos-${{ matrix.arch }}.zip
 
   # ── 5. GitHub Release ────────────────────────────────────────────────────────
   release:
@@ -231,6 +241,7 @@ jobs:
             chvarkov-linux-amd64.AppImage
             chvarkov-linux-amd64.flatpak
             Chvarkov-macos-aarch64.zip
+            Chvarkov-macos-x86_64.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
