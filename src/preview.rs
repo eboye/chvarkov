@@ -42,7 +42,7 @@ impl Preview {
                 .height_request(if large { 400 } else { 200 })
                 .build();
             container.append(&video);
-        } else if is_text && large {
+        } else if is_text {
             let buffer = sourceview::Buffer::new(None);
             let view = sourceview::View::with_buffer(&buffer);
             view.set_editable(false);
