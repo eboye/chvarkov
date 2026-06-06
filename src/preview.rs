@@ -6,58 +6,9 @@ use sourceview5 as sourceview;
 use sourceview::prelude::*;
 use crate::utils;
 
-pub struct Preview {
-    pub widget: gtk::Box,
-}
+pub struct Preview;
 
 impl Preview {
-    pub fn new(file_info: &gio::FileInfo, path: &std::path::Path) -> Self {
-        let container = Self::create_preview_layout(file_info, path, false);
-
-        let scrolled_window = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .width_request(200)
-            .child(&container)
-            .build();
-
-        // Add Resizer to make it match Directory Columns
-        let resizer = gtk::Separator::new(gtk::Orientation::Vertical);
-        resizer.set_cursor_from_name(Some("col-resize"));
-        resizer.add_css_class("resizer");
-        
-        let drag_gesture = gtk::GestureDrag::new();
-        let sw_weak = scrolled_window.downgrade();
-        let resizer_weak = resizer.downgrade();
-        drag_gesture.connect_drag_update(move |gesture, offset_x, offset_y| {
-            if let (Some(sw), Some(resizer)) = (sw_weak.upgrade(), resizer_weak.upgrade())
-                && let Some((start_x, start_y)) = gesture.start_point() {
-                    // Pointer position in the resizer's own coordinate frame.
-                    let (cur_x, cur_y) = (start_x + offset_x, start_y + offset_y);
-                    // Translate it into the pane's frame. The pane's left edge stays
-                    // fixed during the drag, so the resulting width is stable even as
-                    // the layout reflows — without this the resizer chases itself and
-                    // the edge jumps left/right.
-                    if let Some((width, _)) = resizer.translate_coordinates(&sw, cur_x, cur_y) {
-                        sw.set_width_request((width as i32).max(100));
-                    }
-                }
-        });
-
-        resizer.add_controller(drag_gesture);
-
-        let wrapper = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .build();
-        
-        wrapper.append(&scrolled_window);
-        wrapper.append(&resizer);
-
-        Self {
-            widget: wrapper,
-        }
-    }
-
     pub fn create_preview_layout(file_info: &gio::FileInfo, path: &std::path::Path, large: bool) -> gtk::Box {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)

@@ -10,7 +10,7 @@
 - **Miller Columns Navigation:** Navigate deep directory structures with ease using side-by-side columns (plus Icon and List views).
 - **Cross-Platform:** Native support for both **Linux (GNOME)** and **macOS**.
 - **Native Resizing:** Smoothly resize any column or preview pane using native handles.
-- **Live Previews:** Instantly view file details, metadata, large icons, images, video, and syntax-highlighted text.
+- **Live Previews:** Selecting a file opens a preview docked to the right edge — file details, metadata, large icons, images, video, and syntax-highlighted text — staying pinned in place as you navigate. Press `Space` for a larger floating Quick Look.
 - **Modern UI:** Adheres to Libadwaita standards for a clean, responsive interface, with the sidebar, header bar, breadcrumb, and footer aligned to a single consistent height.
 - **Adaptive Sidebar:** Automatically collapses into an overlay on smaller screens.
 - **Native Thumbnails:** Native support for file thumbnails in all view types.

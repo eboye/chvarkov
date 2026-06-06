@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-06
+
+### Changed
+- The file preview is now a **fixed pane docked to the right edge** of the window, shown whenever a single file is selected (in Miller, Icon, and List views). It stays pinned in place instead of scrolling away as an inline Miller column. Selecting a folder, multiple items, or empty space hides it. The pane is resizable; `Space` still opens the larger floating Quick Look.
+
+### Fixed
+- Restored unit tests for capability, size-formatting, and zoom-level logic that had been dropped from the test suite.
+
+### Internal
+- CI: bumped `actions/checkout`, `upload-artifact`, and `download-artifact` to v5 (Node 24).
+
+[0.4.0]: https://github.com/eboye/chvarkov/releases/tag/v0.4.0
+
 ## [0.3.0] - 2026-06-06
 
 ### Added
