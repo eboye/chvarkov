@@ -145,7 +145,7 @@ does not appear for a file the user cannot delete.
   | Action | Shown / allowed when |
   | --- | --- |
   | Open | ≥1 selected |
-  | Cut, Move to… | all selected `can-delete` |
+  | Cut, Move to… | all selected `can-read` and `can-delete` |
   | Copy, Copy to…, Compress, Email, Sharing | all selected `can-read` |
   | Rename | exactly 1 selected and `can-rename` |
   | Create Link | all selected `can-read` (parent-dir write enforced by the engine; toast on failure) |

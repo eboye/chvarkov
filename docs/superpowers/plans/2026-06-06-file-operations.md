@@ -33,7 +33,7 @@ permission-aware context menu (Task 1B) hides the same items. `Caps` /
 | --- | --- |
 | Move to Trash (`delete`) | non-empty and all `caps.trash` |
 | Delete Permanently (`permanent-delete`) | non-empty and all `caps.delete` |
-| Cut, Move to… | non-empty and all `caps.delete` |
+| Cut, Move to… | non-empty and all `caps.read && caps.delete` |
 | Copy, Copy to…, Compress, Email, Sharing | non-empty and all `caps.read` |
 | Rename | exactly 1 and `caps.rename` |
 | Create Link | non-empty and all `caps.read` |
