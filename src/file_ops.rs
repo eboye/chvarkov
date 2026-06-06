@@ -39,7 +39,6 @@ pub fn dedupe_file_name(file_name: &str, exists: impl Fn(&str) -> bool) -> Strin
 }
 
 /// Compute a non-colliding destination path inside `dir` for `file_name`.
-#[allow(dead_code)]
 pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
     let name = dedupe_file_name(file_name, |n| dir.join(n).exists());
     dir.join(name)
@@ -47,7 +46,6 @@ pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
 
 /// Recursively copy `src` to `dst` (file or directory). `dst` is the full
 /// target path (not a parent directory).
-#[allow(dead_code)]
 pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     if src.is_dir() {
         std::fs::create_dir_all(dst)?;
@@ -71,12 +69,10 @@ fn is_cross_device(e: &std::io::Error) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum TransferKind { Copy, Move }
 
 /// Move or copy a batch of source paths into `dest_dir`, prompting on collisions.
 /// Reports via the manager's toast overlay and refreshes the UI when done.
-#[allow(dead_code)]
 pub fn transfer(
     manager: Rc<ColumnManager>,
     parent: gtk::Window,
@@ -155,7 +151,6 @@ pub fn transfer(
 }
 
 /// Show the collision dialog; returns (choice, apply_to_all).
-#[allow(dead_code)]
 async fn ask_conflict(parent: &gtk::Window, name: &str) -> (&'static str, bool) {
     let dialog = adw::AlertDialog::builder()
         .heading("Item already exists")

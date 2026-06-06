@@ -1,3 +1,4 @@
+mod clipboard;
 mod column;
 mod file_ops;
 mod preview;
@@ -254,17 +255,71 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.open", &["Return"]);
 
     let cut_action = gio::SimpleAction::new("cut", None);
-    cut_action.connect_activate(|_, _| {});
+    cut_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !(caps.read && caps.delete) { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                clipboard::publish(&paths, clipboard::Mode::Cut);
+                *manager.clipboard.borrow_mut() = Some(clipboard::ClipboardOp { mode: clipboard::Mode::Cut, paths });
+                manager.send_toast("Cut");
+            }
+        });
+    });
     app.add_action(&cut_action);
     app.set_accels_for_action("app.cut", &["<Control>x"]);
 
     let copy_action = gio::SimpleAction::new("copy", None);
-    copy_action.connect_activate(|_, _| {});
+    copy_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                clipboard::publish(&paths, clipboard::Mode::Copy);
+                *manager.clipboard.borrow_mut() = Some(clipboard::ClipboardOp { mode: clipboard::Mode::Copy, paths });
+                manager.send_toast("Copied");
+            }
+        });
+    });
     app.add_action(&copy_action);
     app.set_accels_for_action("app.copy", &["<Control>c"]);
 
     let paste_action = gio::SimpleAction::new("paste", None);
-    paste_action.connect_activate(|_, _| {});
+    let paste_app_weak = app.downgrade();
+    paste_action.connect_activate(move |_, _| {
+        let Some(app) = paste_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let Some(dest) = manager.focused_dir() else { return };
+                let internal = manager.clipboard.borrow().clone();
+                if let Some(op) = internal {
+                    let kind = match op.mode {
+                        clipboard::Mode::Copy => file_ops::TransferKind::Copy,
+                        clipboard::Mode::Cut => file_ops::TransferKind::Move,
+                    };
+                    file_ops::transfer(manager.clone(), window.clone().upcast(), op.paths, dest, kind);
+                    if op.mode == clipboard::Mode::Cut {
+                        *manager.clipboard.borrow_mut() = None;
+                    }
+                } else {
+                    let manager_c = manager.clone();
+                    let window_c = window.clone();
+                    clipboard::read_external(move |op| {
+                        if let Some(op) = op {
+                            file_ops::transfer(manager_c.clone(), window_c.clone().upcast(), op.paths, dest.clone(), file_ops::TransferKind::Copy);
+                        }
+                    });
+                }
+            }
+        });
+    });
     app.add_action(&paste_action);
     app.set_accels_for_action("app.paste", &["<Control>v"]);
 
@@ -1212,6 +1267,7 @@ struct ColumnManager {
     current_selection: Rc<RefCell<Option<SelectionInfo>>>,
     preview_window: Rc<RefCell<Option<adw::Window>>>,
     toast_overlay: Rc<RefCell<Option<ToastOverlay>>>,
+    clipboard: Rc<RefCell<Option<clipboard::ClipboardOp>>>,
 }
 
 impl ColumnManager {
@@ -1231,6 +1287,7 @@ impl ColumnManager {
             current_selection: Rc::new(RefCell::new(None)),
             preview_window: Rc::new(RefCell::new(None)),
             toast_overlay: Rc::new(RefCell::new(None)),
+            clipboard: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -1238,6 +1295,22 @@ impl ColumnManager {
         if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
             overlay.add_toast(Toast::new(message));
         }
+    }
+
+    /// The directory currently shown by the focused column/view (paste target).
+    pub(crate) fn focused_dir(&self) -> Option<PathBuf> {
+        let view = self.get_focused_list_view()?;
+        for entry in self.entries.borrow().iter() {
+            if entry.focus_target == view {
+                return Some(entry.path.clone());
+            }
+        }
+        if let Some(sel) = self.current_selection.borrow().as_ref() {
+            if let Some(parent) = sel.path.parent() { return Some(parent.to_path_buf()); }
+        }
+        let settings = gio::Settings::new("net.nocopypaste.chvarkov");
+        let p: String = settings.get("current-path");
+        if p.is_empty() { Some(glib::home_dir()) } else { Some(PathBuf::from(p)) }
     }
 
     /// Rebuild the UI from the current path (reuses the existing window).
