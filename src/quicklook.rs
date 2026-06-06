@@ -24,7 +24,6 @@ pub fn native_preview_command(path: &Path, has_qlmanage: bool, has_sushi: bool) 
 }
 
 /// True if `name` is found in any $PATH entry as a file.
-#[allow(dead_code)]
 pub fn binary_on_path(name: &str) -> bool {
     let Some(paths) = std::env::var_os("PATH") else { return false };
     std::env::split_paths(&paths).any(|dir| dir.join(name).is_file())
@@ -32,7 +31,6 @@ pub fn binary_on_path(name: &str) -> bool {
 
 /// Try to open a native preview for `path`. Returns true if a native previewer was
 /// launched, false if the caller should fall back to the GTK preview window.
-#[allow(dead_code)]
 pub fn open_native_preview(path: &Path) -> bool {
     let (has_qlmanage, has_sushi) = if cfg!(target_os = "macos") {
         (binary_on_path("qlmanage"), false)
