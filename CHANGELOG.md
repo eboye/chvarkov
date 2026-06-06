@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.2] - 2026-06-07
 
 ### Added
 - `Space` now opens the **OS-native previewer** when available — macOS QuickLook (`qlmanage`) or GNOME Sushi on Linux — and falls back to the built-in GTK preview window otherwise.
@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replacing a symlinked target removes the link rather than its target tree; a folder move/copy is refused if its path can't be verified; non-UTF-8 names are skipped in zip/email instead of being mangled.
 - Reaped spawned helper processes (preview/terminal/email) and stopped the responsive-label timer from accumulating across view rebuilds.
 - Replaced reachable UI-thread `unwrap()`s in navigation and list rendering with graceful guards.
+
+[0.4.2]: https://github.com/eboye/chvarkov/releases/tag/v0.4.2
 
 ## [0.4.1] - 2026-06-06
 
