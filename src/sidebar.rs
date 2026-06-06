@@ -7,7 +7,6 @@ pub struct Sidebar {
     pub widget: gtk::Box,
     pub list_box: gtk::ListBox,
     pub title_header: adw::HeaderBar,
-    pub pref_footer: gtk::Box,
 }
 
 struct SidebarItem {
@@ -146,7 +145,6 @@ impl Sidebar {
             widget: container,
             list_box,
             title_header,
-            pref_footer,
         }
     }
 }

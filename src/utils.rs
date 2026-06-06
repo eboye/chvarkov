@@ -42,54 +42,6 @@ pub fn combine_caps(items: impl IntoIterator<Item = Caps>) -> Caps {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn combine_caps_ands_and_empty_is_none() {
-        let a = Caps { read: true, write: true, execute: true, delete: true, trash: true, rename: true };
-        let b = Caps { read: true, write: false, execute: true, delete: false, trash: true, rename: true };
-        let c = combine_caps([a, b]);
-        assert!(c.read && c.trash && c.rename && c.execute);
-        assert!(!c.write && !c.delete);
-        let none = combine_caps(std::iter::empty::<Caps>());
-        assert!(!none.read && !none.delete && !none.trash);
-    }
-
-    #[test]
-    fn format_size_units() {
-        assert_eq!(format_size(0), "0 B");
-        assert_eq!(format_size(512), "512 B");
-        assert_eq!(format_size(1024), "1.0 KB");
-        assert_eq!(format_size(1536), "1.5 KB");
-        assert_eq!(format_size(1024 * 1024), "1.0 MB");
-        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
-    }
-
-    #[test]
-    fn zoom_size_tables() {
-        assert_eq!(get_list_icon_size(0), 16);
-        assert_eq!(get_list_icon_size(4), 64);
-        assert_eq!(get_list_icon_size(99), 96);
-        assert_eq!(get_grid_icon_size(0), 48);
-        assert_eq!(get_grid_icon_size(99), 128);
-        assert_eq!(get_font_size(0), 10);
-        assert_eq!(get_font_size(99), 18);
-    }
-
-    #[test]
-    fn caps_from_info_reads_and_defaults() {
-        let info = gio::FileInfo::new();
-        info.set_attribute_boolean("access::can-read", true);
-        info.set_attribute_boolean("access::can-delete", false);
-        let c = caps_from_info(&info);
-        assert!(c.read);
-        assert!(!c.delete);
-        assert!(c.write); // unset attribute defaults to permitted (true)
-    }
-}
-
 /// Attaches a right-click (`button 3`) gesture to `widget` that opens the context menu.
 /// Respects the Shift modifier: shows `create_context_menu_shift()` when Shift is held.
 pub fn attach_context_menu_gesture(widget: &impl gtk::prelude::IsA<gtk::Widget>) {

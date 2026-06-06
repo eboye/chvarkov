@@ -113,6 +113,8 @@ fn setup_styles() {
         .navigation-sidebar {
             background-color: @window_bg_color;
             border-right: 1px solid alpha(@borders, 0.3);
+            margin: 0;
+            padding: 0;
         }
 
         /* Absolute Alignment Scrub */
@@ -141,7 +143,9 @@ fn setup_styles() {
             font-weight: bold;
             margin: 0;
             padding: 0;
-            min-height: 46px; /* Match area height exactly */
+            /* No min-height here: the header already has min-height:46px. A 46px
+               label would stack on top of the header's padding and make the
+               sidebar header taller than the main header. */
         }
 
         .sidebar-footer-area, .breadcrumb-container-scrolled {
@@ -1203,15 +1207,32 @@ fn build_ui(app: &Application) {
 
     let sidebar = Sidebar::new();
 
-    // Sync Sidebar Title height with main HeaderBar exactly
-    let size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
-    size_group.add_widget(&header_bar);
-    size_group.add_widget(&sidebar.title_header);
-
-    // Sync Sidebar Footer height with Breadcrumb Bar exactly
-    let footer_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
-    footer_size_group.add_widget(&breadcrumb_scrolled);
-    footer_size_group.add_widget(&sidebar.pref_footer);
+    // The OverlaySplitView insets the sidebar pane a few px at the top, so the
+    // sidebar header sits lower than the main header even though they're the same
+    // height. The exact inset is platform-dependent, so once both are laid out we
+    // measure it and nudge the higher-positioned header down to match, lining up
+    // the two top bars pixel-for-pixel.
+    {
+        let th = sidebar.title_header.clone().upcast::<gtk::Widget>();
+        let mh = header_bar.clone().upcast::<gtk::Widget>();
+        let win = window.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+            if th.height() <= 1 || mh.height() <= 1 {
+                return glib::ControlFlow::Continue; // not laid out yet
+            }
+            let top = |w: &gtk::Widget| w.translate_coordinates(&win, 0.0, 0.0).map(|(_, y)| y);
+            let (Some(ty), Some(my)) = (top(&th), top(&mh)) else {
+                return glib::ControlFlow::Continue;
+            };
+            let delta = (ty - my).round() as i32;
+            if delta > 0 {
+                mh.set_margin_top(mh.margin_top() + delta);
+            } else if delta < 0 {
+                th.set_margin_top(th.margin_top() - delta);
+            }
+            glib::ControlFlow::Break
+        });
+    }
 
     split_view.set_sidebar(Some(&sidebar.widget));
     split_view.set_show_sidebar(show_sidebar);
