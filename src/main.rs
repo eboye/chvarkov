@@ -1,4 +1,5 @@
 mod column;
+mod file_ops;
 mod preview;
 mod sidebar;
 mod icon_view;
