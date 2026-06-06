@@ -1960,6 +1960,25 @@ impl ColumnManager {
         *self.preview_dock_content.borrow_mut() = Some(content);
     }
 
+    /// Walk the widget tree inside a dock `ScrolledWindow` and stop any
+    /// `GtkVideo` that is currently playing, so the media stream is released
+    /// before the widget is dropped.
+    fn stop_dock_video(content: &ScrolledWindow) {
+        if let Some(child) = content.child() {
+            let mut stack = vec![child];
+            while let Some(w) = stack.pop() {
+                if let Ok(video) = w.clone().downcast::<gtk::Video>() {
+                    video.set_media_stream(None::<&gtk::MediaStream>);
+                }
+                let mut c = w.first_child();
+                while let Some(node) = c {
+                    stack.push(node.clone());
+                    c = node.next_sibling();
+                }
+            }
+        }
+    }
+
     /// Show the docked preview for the current single-file selection, or hide it.
     /// Clearing the content on hide drops the previous preview widget (so video
     /// playback stops).
@@ -1970,10 +1989,12 @@ impl ColumnManager {
         if show
             && let Some(sel) = self.current_selection.borrow().as_ref() {
                 let layout = Preview::create_preview_layout(&sel.file_info, &sel.path, false);
+                Self::stop_dock_video(&content);
                 content.set_child(Some(&layout));
                 container.set_visible(true);
                 return;
             }
+        Self::stop_dock_video(&content);
         content.set_child(None::<&gtk::Widget>);
         container.set_visible(false);
     }
