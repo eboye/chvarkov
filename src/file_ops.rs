@@ -161,6 +161,9 @@ pub fn transfer(
                     "keep" => { target = unique_destination(&dest_dir, &name); }
                     _ => {
                         if both_dirs {
+                            // Directory-into-directory is always merged, never destructively
+                            // replaced (even under "apply to all"), to avoid losing unique
+                            // destination files.
                             merge_dirs = true;
                         } else {
                             let t = target.clone();
@@ -289,10 +292,13 @@ pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBu
         let mut done = 0usize;
         let mut failed = 0usize;
         for path in &paths {
-            let file = gio::File::for_path(path);
-            match file.delete_future(glib::Priority::DEFAULT).await {
-                Ok(_) => { done += 1; manager.on_file_deleted(path); }
-                Err(_) => failed += 1,
+            let p = path.clone();
+            let res = gio::spawn_blocking(move || {
+                if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) }
+            }).await;
+            match res {
+                Ok(Ok(())) => { done += 1; manager.on_file_deleted(path); }
+                _ => failed += 1,
             }
         }
         manager.send_toast(&format!(
@@ -394,20 +400,27 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
 /// Attach the given files to a new email via the platform's mechanism.
 pub fn email(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     use std::process::Command;
-    if paths.is_empty() { return; }
+    let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file()).collect();
+    if paths.is_empty() { manager.send_toast("Select file(s) to share"); return; }
 
     #[cfg(target_os = "macos")]
     {
-        let mut script = String::from("tell application \"Mail\"\nset m to make new outgoing message\ntell m\n");
-        for p in &paths {
-            script.push_str(&format!(
-                "make new attachment with properties {{file name:POSIX file \"{}\"}}\n",
-                p.to_string_lossy().replace('"', "\\\"")
-            ));
-        }
-        script.push_str("end tell\nset visible of m to true\nactivate\nend tell\n");
-        let ok = Command::new("osascript").arg("-e").arg(&script).spawn().is_ok();
-        if !ok { manager.send_toast("Could not open Mail"); }
+        // Pass paths as argv (data, not interpolated into the script) to avoid injection.
+        let mut cmd = Command::new("osascript");
+        cmd.arg("-e").arg("on run argv")
+            .arg("-e").arg("tell application \"Mail\"")
+            .arg("-e").arg("set m to make new outgoing message")
+            .arg("-e").arg("tell m")
+            .arg("-e").arg("repeat with p in argv")
+            .arg("-e").arg("make new attachment with properties {file name:POSIX file (p as text)}")
+            .arg("-e").arg("end repeat")
+            .arg("-e").arg("end tell")
+            .arg("-e").arg("set visible of m to true")
+            .arg("-e").arg("activate")
+            .arg("-e").arg("end tell")
+            .arg("-e").arg("end run");
+        for p in &paths { cmd.arg(p); }
+        if cmd.spawn().is_err() { manager.send_toast("Could not open Mail"); }
     }
 
     #[cfg(not(target_os = "macos"))]

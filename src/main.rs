@@ -1779,14 +1779,17 @@ impl ColumnManager {
 
         // For previews and navigation, we use the first selected item
         let first_idx = selection.minimum();
-        let selected_item = selection_model.model().unwrap().item(first_idx);
+        let Some(model) = selection_model.model() else { return };
+        let selected_item = model.item(first_idx);
 
         if let Some(item) = selected_item {
             // Handle TreeListRow wrapping if it's a List View
             let file_info = if let Ok(tree_row) = item.clone().downcast::<gtk::TreeListRow>() {
-                tree_row.item().and_downcast::<gio::FileInfo>().unwrap()
+                let Some(fi) = tree_row.item().and_downcast::<gio::FileInfo>() else { return };
+                fi
             } else {
-                item.downcast_ref::<gio::FileInfo>().unwrap().clone()
+                let Some(fi) = item.downcast_ref::<gio::FileInfo>() else { return };
+                fi.clone()
             };
 
             let new_path = file_info_path(&file_info, base_path);
