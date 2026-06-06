@@ -12,7 +12,7 @@ impl ListView {
         let directory_list = utils::get_directory_list(path);
 
         let filter = gtk::CustomFilter::new(move |item| {
-            let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
+            let Some(file_info) = item.downcast_ref::<gio::FileInfo>() else { return false; };
             if !show_hidden
                 && (file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.')) {
                     return false;
@@ -28,7 +28,7 @@ impl ListView {
         let sort_type_owned = sort_type.to_string();
         // Tree Model for nested expansion
         let tree_model = gtk::TreeListModel::new(sort_model, false, false, move |item| {
-            let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
+            let file_info = item.downcast_ref::<gio::FileInfo>()?;
             if file_info.file_type() == gio::FileType::Directory
                 && let Some(file) = file_info.attribute_object("standard::file").and_downcast::<gio::File>() {
                     let child_dir_list = gtk::DirectoryList::builder()
@@ -38,7 +38,7 @@ impl ListView {
                         .build();
 
                     let child_filter = gtk::CustomFilter::new(move |item| {
-                        let info = item.downcast_ref::<gio::FileInfo>().unwrap();
+                        let Some(info) = item.downcast_ref::<gio::FileInfo>() else { return false; };
                         if !show_hidden
                             && (info.is_hidden() || info.name().to_string_lossy().starts_with('.')) {
                                 return false;
@@ -69,7 +69,7 @@ impl ListView {
         // 1. Name Column (with TreeExpander)
         let name_factory = gtk::SignalListItemFactory::new();
         name_factory.connect_setup(move |_, list_item| {
-            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
             let expander = gtk::TreeExpander::new();
 
             let container = gtk::Box::builder()
@@ -96,16 +96,16 @@ impl ListView {
         });
 
         name_factory.connect_bind(move |_, list_item| {
-            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-            let tree_row = list_item.item().and_downcast::<gtk::TreeListRow>().unwrap();
-            let file_info = tree_row.item().and_downcast::<gio::FileInfo>().unwrap();
+            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
+            let Some(tree_row) = list_item.item().and_downcast::<gtk::TreeListRow>() else { return; };
+            let Some(file_info) = tree_row.item().and_downcast::<gio::FileInfo>() else { return; };
 
-            let expander = list_item.child().and_downcast::<gtk::TreeExpander>().unwrap();
+            let Some(expander) = list_item.child().and_downcast::<gtk::TreeExpander>() else { return; };
             expander.set_list_row(Some(&tree_row));
 
-            let container = expander.child().and_downcast::<gtk::Box>().unwrap();
-            let image = container.first_child().unwrap().downcast::<gtk::Image>().unwrap();
-            let label = image.next_sibling().unwrap().downcast::<gtk::Label>().unwrap();
+            let Some(container) = expander.child().and_downcast::<gtk::Box>() else { return; };
+            let Some(image) = container.first_child().and_downcast::<gtk::Image>() else { return; };
+            let Some(label) = image.next_sibling().and_downcast::<gtk::Label>() else { return; };
 
             label.set_text(&file_info.display_name());
 
@@ -123,7 +123,7 @@ impl ListView {
             // 2. Type Column
             let type_factory = gtk::SignalListItemFactory::new();
             type_factory.connect_setup(|_, list_item| {
-                let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+                let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
                 let label = gtk::Label::builder()
                     .halign(gtk::Align::Start)
                     .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -133,10 +133,10 @@ impl ListView {
                 list_item.set_child(Some(&label));
             });
             type_factory.connect_bind(|_, list_item| {
-                let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-                let tree_row = list_item.item().and_downcast::<gtk::TreeListRow>().unwrap();
-                let file_info = tree_row.item().and_downcast::<gio::FileInfo>().unwrap();
-                let label = list_item.child().and_downcast::<gtk::Label>().unwrap();
+                let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
+                let Some(tree_row) = list_item.item().and_downcast::<gtk::TreeListRow>() else { return; };
+                let Some(file_info) = tree_row.item().and_downcast::<gio::FileInfo>() else { return; };
+                let Some(label) = list_item.child().and_downcast::<gtk::Label>() else { return; };
 
                 let is_dir = file_info.file_type() == gio::FileType::Directory;
                 let text = if is_dir {
@@ -158,7 +158,7 @@ impl ListView {
             // 3. Date Column
             let date_factory = gtk::SignalListItemFactory::new();
             date_factory.connect_setup(|_, list_item| {
-                let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+                let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
                 let label = gtk::Label::builder()
                     .halign(gtk::Align::Start)
                     .css_classes(["dim-label", "caption"])
@@ -167,10 +167,10 @@ impl ListView {
                 list_item.set_child(Some(&label));
             });
             date_factory.connect_bind(|_, list_item| {
-                let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-                let tree_row = list_item.item().and_downcast::<gtk::TreeListRow>().unwrap();
-                let file_info = tree_row.item().and_downcast::<gio::FileInfo>().unwrap();
-                let label = list_item.child().and_downcast::<gtk::Label>().unwrap();
+                let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
+                let Some(tree_row) = list_item.item().and_downcast::<gtk::TreeListRow>() else { return; };
+                let Some(file_info) = tree_row.item().and_downcast::<gio::FileInfo>() else { return; };
+                let Some(label) = list_item.child().and_downcast::<gtk::Label>() else { return; };
 
                 let date = file_info.modification_date_time()
                     .and_then(|dt| dt.format("%Y-%m-%d").ok())
@@ -188,7 +188,7 @@ impl ListView {
             // 4. Size Column
             let size_factory = gtk::SignalListItemFactory::new();
             size_factory.connect_setup(|_, list_item| {
-                let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+                let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
                 let label = gtk::Label::builder()
                     .halign(gtk::Align::End)
                     .css_classes(["dim-label", "caption"])
@@ -197,10 +197,10 @@ impl ListView {
                 list_item.set_child(Some(&label));
             });
             size_factory.connect_bind(|_, list_item| {
-                let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-                let tree_row = list_item.item().and_downcast::<gtk::TreeListRow>().unwrap();
-                let file_info = tree_row.item().and_downcast::<gio::FileInfo>().unwrap();
-                let label = list_item.child().and_downcast::<gtk::Label>().unwrap();
+                let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
+                let Some(tree_row) = list_item.item().and_downcast::<gtk::TreeListRow>() else { return; };
+                let Some(file_info) = tree_row.item().and_downcast::<gio::FileInfo>() else { return; };
+                let Some(label) = list_item.child().and_downcast::<gtk::Label>() else { return; };
 
                 let is_dir = file_info.file_type() == gio::FileType::Directory;
                 if is_dir {

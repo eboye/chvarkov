@@ -13,7 +13,7 @@ impl Column {
         let directory_list = utils::get_directory_list(path);
 
         let filter = gtk::CustomFilter::new(move |item| {
-            let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
+            let Some(file_info) = item.downcast_ref::<gio::FileInfo>() else { return false; };
             if !show_hidden
                 && (file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.')) {
                     return false;
@@ -35,7 +35,7 @@ impl Column {
         let font_size = utils::get_font_size(zoom_level);
 
         factory.connect_setup(move |_, list_item| {
-            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
             let root_box = gtk::Box::builder()
                 .orientation(gtk::Orientation::Horizontal)
                 .spacing(8)
@@ -95,13 +95,13 @@ impl Column {
         });
 
         factory.connect_bind(move |_, list_item| {
-            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-            let file_info = list_item.item().and_downcast::<gio::FileInfo>().unwrap();
-            let root_box = list_item.child().and_downcast::<gtk::Box>().unwrap();
+            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
+            let Some(file_info) = list_item.item().and_downcast::<gio::FileInfo>() else { return; };
+            let Some(root_box) = list_item.child().and_downcast::<gtk::Box>() else { return; };
 
-            let image = root_box.first_child().unwrap().downcast::<gtk::Image>().unwrap();
-            let text_box = image.next_sibling().unwrap().downcast::<gtk::Box>().unwrap();
-            let label = text_box.first_child().unwrap().downcast::<gtk::Label>().unwrap();
+            let Some(image) = root_box.first_child().and_downcast::<gtk::Image>() else { return; };
+            let Some(text_box) = image.next_sibling().and_downcast::<gtk::Box>() else { return; };
+            let Some(label) = text_box.first_child().and_downcast::<gtk::Label>() else { return; };
 
             label.set_text(&file_info.display_name());
 

@@ -2050,7 +2050,7 @@ impl ColumnManager {
         let index_clone = index;
         column.selection_model.connect_selection_changed(move |selection_model, _, _| {
             let self_idle = self_clone.clone();
-            let selection_idle = selection_model.clone().downcast::<gtk::MultiSelection>().unwrap();
+            let Ok(selection_idle) = selection_model.clone().downcast::<gtk::MultiSelection>() else { return; };
             let path_idle = path_clone.clone();
             glib::idle_add_local(move || {
                 self_idle.handle_selection_change_multi(&selection_idle, &path_idle, index_clone);
@@ -2064,7 +2064,7 @@ impl ColumnManager {
         let path_key_clone = path.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Right {
-                let selection_model = list_view_focus.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
+                let Some(selection_model) = list_view_focus.model().and_downcast::<gtk::MultiSelection>() else { return glib::Propagation::Proceed; };
 
                 if selection_model.selection().is_empty() {
                     selection_model.select_item(0, true);
@@ -2079,12 +2079,11 @@ impl ColumnManager {
                     let target_entry = &entries[index + 1];
                     let target = &target_entry.focus_target;
 
-                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
-                        let sel = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                        if sel.selection().is_empty() {
+                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>()
+                        && let Some(sel) = lv.model().and_downcast::<gtk::MultiSelection>()
+                        && sel.selection().is_empty() {
                             sel.select_item(0, true);
                         }
-                    }
 
                     target.add_css_class("focused-column");
                     target.grab_focus();
@@ -2099,10 +2098,10 @@ impl ColumnManager {
                     target.add_css_class("focused-column");
                     target.grab_focus();
 
-                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
-                        let sel = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                        self_key_clone.handle_selection_change_multi(&sel, &target_entry.path, index - 1);
-                    }
+                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>()
+                        && let Some(sel) = lv.model().and_downcast::<gtk::MultiSelection>() {
+                            self_key_clone.handle_selection_change_multi(&sel, &target_entry.path, index - 1);
+                        }
 
                     return glib::Propagation::Stop;
                 }
