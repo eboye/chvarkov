@@ -11,7 +11,7 @@
 - **Cross-Platform:** Native support for both **Linux (GNOME)** and **macOS**.
 - **Native Resizing:** Smoothly resize any column or preview pane using native handles.
 - **Live Previews:** Instantly view file details, metadata, large icons, images, video, and syntax-highlighted text.
-- **Modern UI:** Adheres to Libadwaita standards for a clean, responsive interface.
+- **Modern UI:** Adheres to Libadwaita standards for a clean, responsive interface, with the sidebar, header bar, breadcrumb, and footer aligned to a single consistent height.
 - **Adaptive Sidebar:** Automatically collapses into an overlay on smaller screens.
 - **Native Thumbnails:** Native support for file thumbnails in all view types.
 - **Keyboard First & Multi-Selection:** Fully navigable via keyboard, with standard multi-selection (Shift, Ctrl, Ctrl+A).
