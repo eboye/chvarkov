@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The docked preview pane now renders file **contents** (e.g. syntax-highlighted text), matching the `Space` view, instead of showing only an icon for text files.
 
+### Fixed
+- The "Columns" view-type button icon no longer renders as a broken/white glyph in light theme (`view-columns-symbolic` doesn't exist in the Adwaita theme; now uses `view-dual-symbolic`).
+- Destructive actions (delete/trash) no longer rely on a styling-only CSS class to pick the target view, eliminating a stale-state mis-targeting hazard; when no view is focused they now safely do nothing.
+- Previewing a special file (FIFO/socket/device) or a file on a slow mount no longer blocks the UI — preview rendering is gated to regular files and text is read off the UI thread.
+- The docked preview no longer autoplays video (only the `Space` view does), and video playback stops when the preview is hidden or swapped (dock and Quick Look window).
+- Pasting from GNOME Files now honors cut vs copy (cut moves) by reading the `x-special/gnome-copied-files` clipboard payload.
+- Replacing a symlinked target removes the link rather than its target tree; a folder move/copy is refused if its path can't be verified; non-UTF-8 names are skipped in zip/email instead of being mangled.
+- Reaped spawned helper processes (preview/terminal/email) and stopped the responsive-label timer from accumulating across view rebuilds.
+- Replaced reachable UI-thread `unwrap()`s in navigation and list rendering with graceful guards.
+
 ## [0.4.1] - 2026-06-06
 
 ### Fixed
