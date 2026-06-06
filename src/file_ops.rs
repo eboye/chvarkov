@@ -590,7 +590,8 @@ pub fn create_folder(manager: Rc<ColumnManager>, parent: gtk::Window, dir: PathB
 }
 
 /// Create a new empty file in `dir` with a non-colliding "untitled file" name,
-/// then open the naming dialog so the user can rename it.
+/// then open the naming dialog so the user can rename it. The monitored
+/// DirectoryList surfaces the new file automatically.
 // TODO: remove #[allow(dead_code)] once wired in (Task 4).
 #[allow(dead_code)]
 pub fn create_file(manager: Rc<ColumnManager>, parent: gtk::Window, dir: PathBuf) {
@@ -602,6 +603,8 @@ pub fn create_file(manager: Rc<ColumnManager>, parent: gtk::Window, dir: PathBuf
         glib::Priority::DEFAULT,
         gio::Cancellable::NONE,
         move |res| match res {
+            // `_stream` is the new FileOutputStream; dropping it closes the fd via
+            // GObject finalize on the built-in GLocalFileOutputStream.
             Ok(_stream) => crate::show_name_dialog(
                 &parent,
                 manager,
