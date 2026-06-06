@@ -25,6 +25,7 @@ use std::cell::RefCell;
 // Use a thread-local for the active manager to avoid unsafe set_data and NonNull issues
 thread_local! {
     static ACTIVE_MANAGER: RefCell<Option<Rc<ColumnManager>>> = const { RefCell::new(None) };
+    static LABEL_TIMER: std::cell::RefCell<Option<glib::SourceId>> = const { std::cell::RefCell::new(None) };
 }
 
 fn main() {
@@ -1192,19 +1193,30 @@ fn build_ui(app: &Application) {
     let view_label_weak = view_btn_label.downgrade();
     let sort_label_weak = sort_btn_label.downgrade();
 
-    // Poll for width changes as a robust workaround in GTK4
+    // Poll for width changes as a robust workaround in GTK4. build_ui re-runs on
+    // every settings toggle, so remove any prior timer before adding a new one to
+    // avoid accumulating perpetual timers.
     let win_weak = window.downgrade();
-    glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-        if let Some(win) = win_weak.upgrade() {
-            let width = win.width();
-            let show = width > 900;
-            if let Some(l) = new_label_weak.upgrade() { l.set_visible(show); }
-            if let Some(l) = view_label_weak.upgrade() { l.set_visible(show); }
-            if let Some(l) = sort_label_weak.upgrade() { l.set_visible(show); }
-            glib::ControlFlow::Continue
-        } else {
-            glib::ControlFlow::Break
+    LABEL_TIMER.with(|t| {
+        if let Some(old) = t.borrow_mut().take() {
+            old.remove();
         }
+        let id = glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+            if let Some(win) = win_weak.upgrade() {
+                let width = win.width();
+                let show = width > 900;
+                if let Some(l) = new_label_weak.upgrade() { l.set_visible(show); }
+                if let Some(l) = view_label_weak.upgrade() { l.set_visible(show); }
+                if let Some(l) = sort_label_weak.upgrade() { l.set_visible(show); }
+                glib::ControlFlow::Continue
+            } else {
+                // Window gone: forget our stored id so a later build_ui doesn't
+                // try to remove an already-finished source.
+                LABEL_TIMER.with(|t| *t.borrow_mut() = None);
+                glib::ControlFlow::Break
+            }
+        });
+        *t.borrow_mut() = Some(id);
     });
 
     // Initial check
@@ -1657,10 +1669,11 @@ impl ColumnManager {
 
     /// The directory currently shown by the focused column/view (paste target).
     pub(crate) fn focused_dir(&self) -> Option<PathBuf> {
-        let view = self.get_focused_list_view()?;
-        for entry in self.entries.borrow().iter() {
-            if entry.focus_target == view {
-                return Some(entry.path.clone());
+        if let Some(view) = self.get_focused_list_view() {
+            for entry in self.entries.borrow().iter() {
+                if entry.focus_target == view {
+                    return Some(entry.path.clone());
+                }
             }
         }
         if let Some(sel) = self.current_selection.borrow().as_ref()
@@ -1677,30 +1690,39 @@ impl ColumnManager {
         }
     }
 
-    /// Called after a file is trashed or permanently deleted.
-    /// Clears the current selection and collapses any child columns that were
-    /// opened from the deleted path, keeping only the parent column focused.
-    pub(crate) fn on_file_deleted(&self, deleted_path: &std::path::Path) {
+    /// Called once after a batch trash/delete. Clears the focused view's selection
+    /// (so deleted rows don't stay highlighted) and collapses any columns deeper
+    /// than the shallowest affected parent. The monitored DirectoryList refreshes
+    /// the rest.
+    pub(crate) fn on_files_deleted(&self, deleted: &[std::path::PathBuf]) {
         *self.current_selection.borrow_mut() = None;
 
-        let parent = deleted_path.parent().map(|p| p.to_path_buf());
-        let keep_count = if let Some(parent_path) = &parent {
-            let entries = self.entries.borrow();
-            entries.iter().position(|e| &e.path == parent_path)
-                .map(|i| i + 1)
-                .unwrap_or(entries.len())
-        } else {
-            self.entries.borrow().len()
-        };
+        // Clear the focused view's selection model, if any.
+        if let Some(view) = self.get_focused_list_view()
+            && let Some(model) = get_selection_model(&view) {
+                model.unselect_all();
+            }
+
+        // Shallowest affected parent → how many columns to keep.
+        let mut keep_count = self.entries.borrow().len();
+        for path in deleted {
+            if let Some(parent) = path.parent() {
+                let entries = self.entries.borrow();
+                if let Some(i) = entries.iter().position(|e| e.path == parent) {
+                    keep_count = keep_count.min(i + 1);
+                }
+            }
+        }
 
         let mut entries = self.entries.borrow_mut();
         while entries.len() > keep_count {
             let entry = entries.pop().unwrap();
             self.columns_box.remove(&entry.container);
         }
+        drop(entries);
 
         self.update_preview_if_open();
-        self.update_dock(false); // hide the docked preview for the deleted selection
+        self.update_dock(false);
     }
 
     fn set_main_view(&self, view: gtk::Widget) {
@@ -1885,18 +1907,11 @@ impl ColumnManager {
                 }
         }
 
-        // FALLBACK (no live focus, e.g. just after a rebuild): the CSS class set
-        // by keyboard navigation.
-        let entries = self.entries.borrow();
-        for entry in entries.iter() {
-            if entry.focus_target.has_css_class("focused-column") {
-                return Some(entry.focus_target.clone());
-            }
-        }
-        if let Some(main) = self.main_view.borrow().as_ref()
-            && (main.has_css_class("focused-grid") || main.has_css_class("focused-list")) {
-                return Some(main.clone());
-            }
+        // No live keyboard focus: return None so destructive actions no-op rather
+        // than act on the wrong view. CSS classes (focused-column/grid/list) are
+        // styling only and are deliberately NOT consulted here (they are updated
+        // by arrow-key nav only and can be stale — that mismatch caused a
+        // delete-the-wrong-folder data-loss bug).
         None
     }
 
@@ -1945,6 +1960,11 @@ impl ColumnManager {
     fn update_preview_if_open(&self) {
         if let Some(window) = self.preview_window.borrow().as_ref()
             && let Some(selection) = self.current_selection.borrow().as_ref() {
+                // Stop the outgoing video before swapping content (the Quick Look
+                // window autoplays, so arrowing files would otherwise leave it playing).
+                if let Some(old) = window.content() {
+                    Self::stop_video_in(&old);
+                }
                 let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
                 let toolbar_view = adw::ToolbarView::builder().content(&preview_layout).build();
                 toolbar_view.add_top_bar(&adw::HeaderBar::new());
@@ -1957,6 +1977,23 @@ impl ColumnManager {
         *self.preview_dock_content.borrow_mut() = Some(content);
     }
 
+    /// Walk `root` and its descendants and stop any `GtkVideo`'s media stream, so
+    /// playback ends and the stream is released before the widget is replaced or
+    /// dropped (used for both the docked pane and the Quick Look window).
+    fn stop_video_in(root: &impl IsA<gtk::Widget>) {
+        let mut stack = vec![root.clone().upcast::<gtk::Widget>()];
+        while let Some(w) = stack.pop() {
+            if let Ok(video) = w.clone().downcast::<gtk::Video>() {
+                video.set_media_stream(None::<&gtk::MediaStream>);
+            }
+            let mut c = w.first_child();
+            while let Some(node) = c {
+                stack.push(node.clone());
+                c = node.next_sibling();
+            }
+        }
+    }
+
     /// Show the docked preview for the current single-file selection, or hide it.
     /// Clearing the content on hide drops the previous preview widget (so video
     /// playback stops).
@@ -1967,10 +2004,12 @@ impl ColumnManager {
         if show
             && let Some(sel) = self.current_selection.borrow().as_ref() {
                 let layout = Preview::create_preview_layout(&sel.file_info, &sel.path, false);
+                Self::stop_video_in(&content);
                 content.set_child(Some(&layout));
                 container.set_visible(true);
                 return;
             }
+        Self::stop_video_in(&content);
         content.set_child(None::<&gtk::Widget>);
         container.set_visible(false);
     }
@@ -2014,7 +2053,7 @@ impl ColumnManager {
         let index_clone = index;
         column.selection_model.connect_selection_changed(move |selection_model, _, _| {
             let self_idle = self_clone.clone();
-            let selection_idle = selection_model.clone().downcast::<gtk::MultiSelection>().unwrap();
+            let Ok(selection_idle) = selection_model.clone().downcast::<gtk::MultiSelection>() else { return; };
             let path_idle = path_clone.clone();
             glib::idle_add_local(move || {
                 self_idle.handle_selection_change_multi(&selection_idle, &path_idle, index_clone);
@@ -2028,7 +2067,7 @@ impl ColumnManager {
         let path_key_clone = path.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Right {
-                let selection_model = list_view_focus.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
+                let Some(selection_model) = list_view_focus.model().and_downcast::<gtk::MultiSelection>() else { return glib::Propagation::Proceed; };
 
                 if selection_model.selection().is_empty() {
                     selection_model.select_item(0, true);
@@ -2043,12 +2082,11 @@ impl ColumnManager {
                     let target_entry = &entries[index + 1];
                     let target = &target_entry.focus_target;
 
-                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
-                        let sel = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                        if sel.selection().is_empty() {
+                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>()
+                        && let Some(sel) = lv.model().and_downcast::<gtk::MultiSelection>()
+                        && sel.selection().is_empty() {
                             sel.select_item(0, true);
                         }
-                    }
 
                     target.add_css_class("focused-column");
                     target.grab_focus();
@@ -2063,10 +2101,10 @@ impl ColumnManager {
                     target.add_css_class("focused-column");
                     target.grab_focus();
 
-                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>() {
-                        let sel = lv.model().unwrap().downcast::<gtk::MultiSelection>().unwrap();
-                        self_key_clone.handle_selection_change_multi(&sel, &target_entry.path, index - 1);
-                    }
+                    if let Ok(lv) = target.clone().downcast::<gtk::ListView>()
+                        && let Some(sel) = lv.model().and_downcast::<gtk::MultiSelection>() {
+                            self_key_clone.handle_selection_change_multi(&sel, &target_entry.path, index - 1);
+                        }
 
                     return glib::Propagation::Stop;
                 }

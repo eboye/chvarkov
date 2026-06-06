@@ -6,6 +6,17 @@ use libadwaita as adw;
 use adw::prelude::*;
 use crate::ColumnManager;
 
+/// Spawn `cmd`, reaping the child on a detached thread so it doesn't become a
+/// zombie. Returns Ok(()) if it launched.
+fn spawn_reaped(cmd: &mut std::process::Command) -> std::io::Result<()> {
+    let child = cmd.spawn()?;
+    std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 /// Split a file name into (stem, extension-with-dot). Leading-dot files
 /// (".bashrc") are treated as having no extension.
 fn split_name(file_name: &str) -> (String, String) {
@@ -140,6 +151,14 @@ pub fn transfer(
             let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
             let src_canon = src.canonicalize().ok();
 
+            // Guard: refuse to move a directory whose path can't be verified —
+            // the into-itself check would be silently skipped.
+            if src.is_dir() && src_canon.is_none() {
+                manager.send_toast(&format!("Can't verify \u{201c}{name}\u{201d}; skipped for safety"));
+                failed += 1;
+                continue;
+            }
+
             // Guard: don't place a directory inside itself or a descendant.
             if src.is_dir()
                 && let (Some(sc), Some(dc)) = (&src_canon, &dest_canon)
@@ -188,7 +207,10 @@ pub fn transfer(
                         } else {
                             let t = target.clone();
                             let removed = gio::spawn_blocking(move || {
-                                if t.is_dir() { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
+                                let is_real_dir = std::fs::symlink_metadata(&t)
+                                    .map(|m| m.file_type().is_dir())
+                                    .unwrap_or(false);
+                                if is_real_dir { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
                             }).await;
                             if !matches!(removed, Ok(Ok(()))) {
                                 manager.send_toast(&format!("Could not replace {name}"));
@@ -277,9 +299,12 @@ pub fn trash(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
         for path in &paths {
             let file = gio::File::for_path(path);
             match file.trash_future(glib::Priority::DEFAULT).await {
-                Ok(_) => { done += 1; manager.on_file_deleted(path); }
+                Ok(_) => done += 1,
                 Err(_) => failed += 1,
             }
+        }
+        if done > 0 {
+            manager.on_files_deleted(&paths);
         }
         manager.send_toast(&format!(
             "Moved {done} item(s) to Trash{}",
@@ -317,9 +342,12 @@ pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBu
                 if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) }
             }).await;
             match res {
-                Ok(Ok(())) => { done += 1; manager.on_file_deleted(path); }
+                Ok(Ok(())) => done += 1,
                 _ => failed += 1,
             }
+        }
+        if done > 0 {
+            manager.on_files_deleted(&paths);
         }
         manager.send_toast(&format!(
             "Deleted {done} item(s){}",
@@ -332,7 +360,7 @@ pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBu
 pub fn open_terminal(manager: Rc<ColumnManager>, dir: PathBuf) {
     use std::process::Command;
     #[cfg(target_os = "macos")]
-    let spawned = Command::new("open").arg("-a").arg("Terminal").arg(&dir).spawn().is_ok();
+    let spawned = spawn_reaped(Command::new("open").arg("-a").arg("Terminal").arg(&dir)).is_ok();
 
     #[cfg(not(target_os = "macos"))]
     let spawned = {
@@ -349,7 +377,7 @@ pub fn open_terminal(manager: Rc<ColumnManager>, dir: PathBuf) {
             v
         };
         for (cmd, args) in candidates {
-            if Command::new(&cmd).args(&args).current_dir(&dir).spawn().is_ok() { ok = true; break; }
+            if spawn_reaped(Command::new(&cmd).args(&args).current_dir(&dir)).is_ok() { ok = true; break; }
         }
         ok
     };
@@ -396,7 +424,8 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
             return Ok(()); // skip symlinks: avoids loops and out-of-tree path leakage
         }
         let rel = path.strip_prefix(base.parent().unwrap_or(base)).unwrap_or(path);
-        let name = rel.to_string_lossy().trim_start_matches('/').to_string();
+        let Some(name) = rel.to_str() else { return Ok(()); }; // skip non-UTF-8 names
+        let name = name.trim_start_matches('/').to_string();
         if meta.is_dir() {
             zip.add_directory(format!("{name}/"), *opts).map_err(std::io::Error::from)?;
             for entry in std::fs::read_dir(path)? {
@@ -420,7 +449,7 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
 /// Attach the given files to a new email via the platform's mechanism.
 pub fn email(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     use std::process::Command;
-    let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file()).collect();
+    let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file() && p.to_str().is_some()).collect();
     if paths.is_empty() { manager.send_toast("Select file(s) to share"); return; }
 
     #[cfg(target_os = "macos")]
@@ -440,14 +469,14 @@ pub fn email(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
             .arg("-e").arg("end tell")
             .arg("-e").arg("end run");
         for p in &paths { cmd.arg(p); }
-        if cmd.spawn().is_err() { manager.send_toast("Could not open Mail"); }
+        if spawn_reaped(&mut cmd).is_err() { manager.send_toast("Could not open Mail"); }
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         let mut cmd = Command::new("xdg-email");
         for p in &paths { cmd.arg("--attach").arg(p); }
-        if cmd.spawn().is_err() { manager.send_toast("xdg-email not available"); }
+        if spawn_reaped(&mut cmd).is_err() { manager.send_toast("xdg-email not available"); }
     }
 }
 

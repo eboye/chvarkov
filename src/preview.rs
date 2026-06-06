@@ -20,9 +20,10 @@ impl Preview {
             .build();
 
         let content_type = file_info.content_type();
-        let is_image = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "image/*")).unwrap_or(false);
-        let is_video = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "video/*")).unwrap_or(false);
-        let is_text = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "text/*")).unwrap_or(false);
+        let is_regular = file_info.file_type() == gio::FileType::Regular;
+        let is_image = is_regular && content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "image/*")).unwrap_or(false);
+        let is_video = is_regular && content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "video/*")).unwrap_or(false);
+        let is_text = is_regular && content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "text/*")).unwrap_or(false);
 
         if is_image {
             let picture = gtk::Picture::for_filename(path);
@@ -35,8 +36,8 @@ impl Preview {
             let file = gio::File::for_path(path);
             let video = gtk::Video::builder()
                 .file(&file)
-                .autoplay(true)
-                .loop_(true)
+                .autoplay(large)
+                .loop_(large)
                 .hexpand(true)
                 .vexpand(true)
                 .height_request(if large { 400 } else { 200 })
@@ -56,14 +57,22 @@ impl Preview {
             let lang = lang_manager.guess_language(Some(filename), content_type.as_deref());
             buffer.set_language(lang.as_ref());
 
-            if let Ok(file) = std::fs::File::open(path) {
-                use std::io::Read;
-                let mut content = Vec::new();
-                file.take(10000).read_to_end(&mut content).ok(); // Read first 10KB
-
+            let path_buf = path.to_path_buf();
+            let buffer_clone = buffer.clone();
+            glib::spawn_future_local(async move {
+                let content = gio::spawn_blocking(move || {
+                    use std::io::Read;
+                    let mut buf = Vec::new();
+                    if let Ok(file) = std::fs::File::open(&path_buf) {
+                        let _ = file.take(10000).read_to_end(&mut buf);
+                    }
+                    buf
+                })
+                .await
+                .unwrap_or_default();
                 let text = String::from_utf8_lossy(&content);
-                buffer.set_text(&text);
-            }
+                buffer_clone.set_text(&text);
+            });
 
             let scrolled = gtk::ScrolledWindow::builder()
                 .hexpand(true)
@@ -133,7 +142,9 @@ impl Preview {
             .build();
 
         let content_type = file_info.content_type();
-        let is_image = content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "image/*")).unwrap_or(false);
+        // Gate on regular files so a FIFO/socket/device never blocks on Picture load.
+        let is_image = file_info.file_type() == gio::FileType::Regular
+            && content_type.as_ref().map(|ct| utils::is_content_type_a(ct, "image/*")).unwrap_or(false);
 
         if is_image {
             let picture = gtk::Picture::for_filename(path);

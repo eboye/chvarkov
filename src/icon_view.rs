@@ -12,7 +12,7 @@ impl IconView {
         let directory_list = utils::get_directory_list(path);
 
         let filter = gtk::CustomFilter::new(move |item| {
-            let file_info = item.downcast_ref::<gio::FileInfo>().unwrap();
+            let Some(file_info) = item.downcast_ref::<gio::FileInfo>() else { return false; };
             if !show_hidden
                 && (file_info.is_hidden() || file_info.name().to_string_lossy().starts_with('.')) {
                     return false;
@@ -34,7 +34,7 @@ impl IconView {
         let item_width = icon_size + 24;
 
         factory.connect_setup(move |_, list_item| {
-            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
             let container = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .spacing(4)
@@ -85,12 +85,12 @@ impl IconView {
         });
 
         factory.connect_bind(move |_, list_item| {
-            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-            let file_info = list_item.item().and_downcast::<gio::FileInfo>().unwrap();
-            let container = list_item.child().and_downcast::<gtk::Box>().unwrap();
+            let Some(list_item) = list_item.downcast_ref::<gtk::ListItem>() else { return; };
+            let Some(file_info) = list_item.item().and_downcast::<gio::FileInfo>() else { return; };
+            let Some(container) = list_item.child().and_downcast::<gtk::Box>() else { return; };
 
-            let image = container.first_child().unwrap().downcast::<gtk::Image>().unwrap();
-            let label = image.next_sibling().unwrap().downcast::<gtk::Label>().unwrap();
+            let Some(image) = container.first_child().and_downcast::<gtk::Image>() else { return; };
+            let Some(label) = image.next_sibling().and_downcast::<gtk::Label>() else { return; };
 
             label.set_text(&file_info.display_name());
 
