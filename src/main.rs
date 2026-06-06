@@ -1,4 +1,6 @@
+mod clipboard;
 mod column;
+mod file_ops;
 mod preview;
 mod sidebar;
 mod icon_view;
@@ -173,6 +175,19 @@ fn setup_styles() {
     );
 }
 
+/// (selected count, AND-combined capabilities) for the focused view's selection.
+pub(crate) fn selection_caps() -> (usize, utils::Caps) {
+    ACTIVE_MANAGER.with(|m| {
+        if let Some(manager) = m.borrow().as_ref() {
+            let sel = manager.collect_selection();
+            let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+            (sel.len(), caps)
+        } else {
+            (0, utils::Caps::default())
+        }
+    })
+}
+
 fn get_selection_model(widget: &gtk::Widget) -> Option<gtk::MultiSelection> {
     if let Ok(lv) = widget.clone().downcast::<gtk::ListView>() {
         return lv.model().and_downcast::<gtk::MultiSelection>();
@@ -184,6 +199,16 @@ fn get_selection_model(widget: &gtk::Widget) -> Option<gtk::MultiSelection> {
         return cv.model().and_downcast::<gtk::MultiSelection>();
     }
     None
+}
+
+/// Resolve a FileInfo's real path. Uses the `standard::file` attribute (always
+/// requested in our DirectoryLists), which is correct even for nested rows in
+/// the tree-based List view. Falls back to `base/name` if the attribute is absent.
+fn file_info_path(info: &gio::FileInfo, base: &std::path::Path) -> PathBuf {
+    info.attribute_object("standard::file")
+        .and_downcast::<gio::File>()
+        .and_then(|f| f.path())
+        .unwrap_or_else(|| base.join(info.name()))
 }
 
 fn setup_actions(app: &Application) {
@@ -201,13 +226,11 @@ fn setup_actions(app: &Application) {
 
     let open_action = gio::SimpleAction::new("open", None);
     open_action.connect_activate(|_, _| {
-       println!("Open action triggered");
        ACTIVE_MANAGER.with(|m| {
-           if let Some(manager) = m.borrow().as_ref() {
-               if let Some(selection) = manager.current_selection.borrow().as_ref() {
+           if let Some(manager) = m.borrow().as_ref()
+               && let Some(selection) = manager.current_selection.borrow().as_ref() {
                    let file_info = &selection.file_info;
                    let path = &selection.path;
-                   println!("Attempting to open: {:?}", path);
                     let is_dir = file_info.file_type() == gio::FileType::Directory || path.is_dir();
 
                     if is_dir {
@@ -225,33 +248,130 @@ fn setup_actions(app: &Application) {
                         gio::AppInfo::launch_default_for_uri(&file.uri(), None::<&gio::AppLaunchContext>).ok();
                     }
                 }
-            }
         });
     });
     app.add_action(&open_action);
     app.set_accels_for_action("app.open", &["Return"]);
 
     let cut_action = gio::SimpleAction::new("cut", None);
-    cut_action.connect_activate(|_, _| println!("Cut action triggered"));
+    cut_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !(caps.read && caps.delete) { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                clipboard::publish(&paths, clipboard::Mode::Cut);
+                *manager.clipboard.borrow_mut() = Some(clipboard::ClipboardOp { mode: clipboard::Mode::Cut, paths });
+                manager.send_toast("Cut");
+            }
+        });
+    });
     app.add_action(&cut_action);
     app.set_accels_for_action("app.cut", &["<Control>x"]);
 
     let copy_action = gio::SimpleAction::new("copy", None);
-    copy_action.connect_activate(|_, _| println!("Copy action triggered"));
+    copy_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                clipboard::publish(&paths, clipboard::Mode::Copy);
+                *manager.clipboard.borrow_mut() = Some(clipboard::ClipboardOp { mode: clipboard::Mode::Copy, paths });
+                manager.send_toast("Copied");
+            }
+        });
+    });
     app.add_action(&copy_action);
     app.set_accels_for_action("app.copy", &["<Control>c"]);
 
     let paste_action = gio::SimpleAction::new("paste", None);
-    paste_action.connect_activate(|_, _| println!("Paste action triggered"));
+    let paste_app_weak = app.downgrade();
+    paste_action.connect_activate(move |_, _| {
+        let Some(app) = paste_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let Some(dest) = manager.focused_dir() else { return };
+                let internal = manager.clipboard.borrow().clone();
+                if let Some(op) = internal {
+                    let kind = match op.mode {
+                        clipboard::Mode::Copy => file_ops::TransferKind::Copy,
+                        clipboard::Mode::Cut => file_ops::TransferKind::Move,
+                    };
+                    file_ops::transfer(manager.clone(), window.clone().upcast(), op.paths, dest, kind);
+                    if op.mode == clipboard::Mode::Cut {
+                        *manager.clipboard.borrow_mut() = None;
+                    }
+                } else {
+                    let manager_c = manager.clone();
+                    let window_c = window.clone();
+                    clipboard::read_external(move |op| {
+                        if let Some(op) = op {
+                            file_ops::transfer(manager_c.clone(), window_c.clone().upcast(), op.paths, dest.clone(), file_ops::TransferKind::Copy);
+                        }
+                    });
+                }
+            }
+        });
+    });
     app.add_action(&paste_action);
     app.set_accels_for_action("app.paste", &["<Control>v"]);
 
     let move_to_action = gio::SimpleAction::new("move-to", None);
-    move_to_action.connect_activate(|_, _| println!("Move to action triggered"));
+    let move_app_weak = app.downgrade();
+    move_to_action.connect_activate(move |_, _| {
+        let Some(app) = move_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !(caps.read && caps.delete) { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                let manager_c = manager.clone();
+                let win = window.clone();
+                let dialog = gtk::FileDialog::builder().title("Move to Folder").build();
+                dialog.select_folder(Some(&window), gio::Cancellable::NONE, move |res| {
+                    if let Ok(folder) = res
+                        && let Some(dest) = folder.path() {
+                            file_ops::transfer(manager_c.clone(), win.clone().upcast(), paths.clone(), dest, file_ops::TransferKind::Move);
+                        }
+                });
+            }
+        });
+    });
     app.add_action(&move_to_action);
 
     let copy_to_action = gio::SimpleAction::new("copy-to", None);
-    copy_to_action.connect_activate(|_, _| println!("Copy to action triggered"));
+    let copy_app_weak = app.downgrade();
+    copy_to_action.connect_activate(move |_, _| {
+        let Some(app) = copy_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                let manager_c = manager.clone();
+                let win = window.clone();
+                let dialog = gtk::FileDialog::builder().title("Copy to Folder").build();
+                dialog.select_folder(Some(&window), gio::Cancellable::NONE, move |res| {
+                    if let Ok(folder) = res
+                        && let Some(dest) = folder.path() {
+                            file_ops::transfer(manager_c.clone(), win.clone().upcast(), paths.clone(), dest, file_ops::TransferKind::Copy);
+                        }
+                });
+            }
+        });
+    });
     app.add_action(&copy_to_action);
 
     let rename_action = gio::SimpleAction::new("rename", None);
@@ -259,13 +379,11 @@ fn setup_actions(app: &Application) {
     rename_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_rename.upgrade() {
             ACTIVE_MANAGER.with(|m| {
-                if let Some(manager) = m.borrow().as_ref() {
-                    if let Some(selection) = manager.current_selection.borrow().as_ref() {
-                        if let Some(window) = app.active_window().and_then(|w| w.downcast::<ApplicationWindow>().ok()) {
+                if let Some(manager) = m.borrow().as_ref()
+                    && let Some(selection) = manager.current_selection.borrow().as_ref()
+                        && let Some(window) = app.active_window().and_then(|w| w.downcast::<ApplicationWindow>().ok()) {
                             show_rename_dialog(&window, manager.clone(), &selection.file_info.display_name(), selection.path.clone());
                         }
-                    }
-                }
             });
         }
     });
@@ -273,25 +391,62 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.rename", &["F2"]);
 
     let create_link_action = gio::SimpleAction::new("create-link", None);
-    create_link_action.connect_activate(|_, _| println!("Create link action triggered"));
+    create_link_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::symlink(manager.clone(), paths);
+            }
+        });
+    });
     app.add_action(&create_link_action);
     app.set_accels_for_action("app.create-link", &["<Shift><Control>m"]);
 
     let compress_action = gio::SimpleAction::new("compress", None);
-    compress_action.connect_activate(|_, _| println!("Compress action triggered"));
+    compress_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::compress(manager.clone(), paths);
+            }
+        });
+    });
     app.add_action(&compress_action);
 
     let email_action = gio::SimpleAction::new("email", None);
-    email_action.connect_activate(|_, _| println!("Email action triggered"));
+    email_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().filter(|s| !s.path.is_dir()).map(|s| s.path).collect();
+                if paths.is_empty() { manager.send_toast("Select file(s) to email"); return; }
+                file_ops::email(manager.clone(), paths);
+            }
+        });
+    });
     app.add_action(&email_action);
 
     let delete_action = gio::SimpleAction::new("delete", None);
     delete_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                if let Some(selection) = manager.current_selection.borrow().as_ref() {
-                    trash_file(manager.clone(), selection.path.clone());
-                }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.trash { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::trash(manager.clone(), paths);
             }
         });
     });
@@ -299,12 +454,18 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.delete", &["Delete"]);
 
     let permanent_delete_action = gio::SimpleAction::new("permanent-delete", None);
-    permanent_delete_action.connect_activate(|_, _| {
+    let perm_del_app_weak = app.downgrade();
+    permanent_delete_action.connect_activate(move |_, _| {
+        let Some(app) = perm_del_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                if let Some(selection) = manager.current_selection.borrow().as_ref() {
-                    permanent_delete_file(manager.clone(), selection.path.clone());
-                }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.delete { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::delete(manager.clone(), window.clone().upcast(), paths);
             }
         });
     });
@@ -312,23 +473,79 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.permanent-delete", &["<Shift>Delete"]);
 
     let open_terminal_action = gio::SimpleAction::new("open-terminal", None);
-    open_terminal_action.connect_activate(|_, _| println!("Open in Terminal triggered"));
+    open_terminal_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let dir = manager.collect_selection().into_iter().next()
+                    .and_then(|s| if s.path.is_dir() { Some(s.path) } else { s.path.parent().map(|p| p.to_path_buf()) })
+                    .or_else(|| manager.focused_dir());
+                if let Some(dir) = dir { file_ops::open_terminal(manager.clone(), dir); }
+            }
+        });
+    });
     app.add_action(&open_terminal_action);
 
     let copy_path_action = gio::SimpleAction::new("copy-path", None);
-    copy_path_action.connect_activate(|_, _| println!("Copy Path triggered"));
+    copy_path_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let text = manager.collect_selection().into_iter()
+                    .map(|s| s.path.to_string_lossy().to_string())
+                    .collect::<Vec<_>>().join("\n");
+                if !text.is_empty() {
+                    if let Some(d) = gtk::gdk::Display::default() { d.clipboard().set_text(&text); }
+                    manager.send_toast("Path copied");
+                }
+            }
+        });
+    });
     app.add_action(&copy_path_action);
 
     let copy_uri_action = gio::SimpleAction::new("copy-uri", None);
-    copy_uri_action.connect_activate(|_, _| println!("Copy URI triggered"));
+    copy_uri_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let text = manager.collect_selection().into_iter()
+                    .map(|s| gio::File::for_path(&s.path).uri().to_string())
+                    .collect::<Vec<_>>().join("\n");
+                if !text.is_empty() {
+                    if let Some(d) = gtk::gdk::Display::default() { d.clipboard().set_text(&text); }
+                    manager.send_toast("URI copied");
+                }
+            }
+        });
+    });
     app.add_action(&copy_uri_action);
 
     let copy_name_action = gio::SimpleAction::new("copy-name", None);
-    copy_name_action.connect_activate(|_, _| println!("Copy Name triggered"));
+    copy_name_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let text = manager.collect_selection().into_iter()
+                    .map(|s| s.file_info.display_name().to_string())
+                    .collect::<Vec<_>>().join("\n");
+                if !text.is_empty() {
+                    if let Some(d) = gtk::gdk::Display::default() { d.clipboard().set_text(&text); }
+                    manager.send_toast("Name copied");
+                }
+            }
+        });
+    });
     app.add_action(&copy_name_action);
 
     let sharing_options_action = gio::SimpleAction::new("sharing-options", None);
-    sharing_options_action.connect_activate(|_, _| println!("Sharing Options triggered"));
+    sharing_options_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::share(manager.clone(), paths);
+            }
+        });
+    });
     app.add_action(&sharing_options_action);
 
     let properties_action = gio::SimpleAction::new("properties", None);
@@ -336,8 +553,8 @@ fn setup_actions(app: &Application) {
     properties_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_prop.upgrade() {
             ACTIVE_MANAGER.with(|m| {
-                if let Some(manager) = m.borrow().as_ref() {
-                    if let Some(selection) = manager.current_selection.borrow().as_ref() {
+                if let Some(manager) = m.borrow().as_ref()
+                    && let Some(selection) = manager.current_selection.borrow().as_ref() {
                         let file_info = &selection.file_info;
                         let path = &selection.path;
 
@@ -371,7 +588,6 @@ fn setup_actions(app: &Application) {
                             prop_window.present();
                         }
                     }
-                }
             });
         }
     });
@@ -383,11 +599,10 @@ fn setup_actions(app: &Application) {
     preview_action.connect_activate(move |_, _| {
         if let Some(app) = app_weak_p.upgrade() {
             ACTIVE_MANAGER.with(|m| {
-                if let Some(manager) = m.borrow().as_ref() {
-                    if let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
+                if let Some(manager) = m.borrow().as_ref()
+                    && let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
                         manager.toggle_preview(&window);
                     }
-                }
             });
         }
     });
@@ -398,13 +613,11 @@ fn setup_actions(app: &Application) {
     let select_all_action = gio::SimpleAction::new("select-all", None);
     select_all_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
-            if let Some(manager) = m.borrow().as_ref() {
-                if let Some(lv) = manager.get_focused_list_view() {
-                    if let Some(sm) = get_selection_model(&lv) {
+            if let Some(manager) = m.borrow().as_ref()
+                && let Some(lv) = manager.get_focused_list_view()
+                    && let Some(sm) = get_selection_model(&lv) {
                         sm.select_all();
                     }
-                }
-            }
         });
     });
     app.add_action(&select_all_action);
@@ -413,13 +626,11 @@ fn setup_actions(app: &Application) {
     let select_none_action = gio::SimpleAction::new("select-none", None);
     select_none_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
-            if let Some(manager) = m.borrow().as_ref() {
-                if let Some(lv) = manager.get_focused_list_view() {
-                    if let Some(sm) = get_selection_model(&lv) {
+            if let Some(manager) = m.borrow().as_ref()
+                && let Some(lv) = manager.get_focused_list_view()
+                    && let Some(sm) = get_selection_model(&lv) {
                         sm.unselect_all();
                     }
-                }
-            }
         });
     });
     app.add_action(&select_none_action);
@@ -428,9 +639,9 @@ fn setup_actions(app: &Application) {
     let invert_selection_action = gio::SimpleAction::new("invert-selection", None);
     invert_selection_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
-            if let Some(manager) = m.borrow().as_ref() {
-                if let Some(lv) = manager.get_focused_list_view() {
-                    if let Some(sm) = get_selection_model(&lv) {
+            if let Some(manager) = m.borrow().as_ref()
+                && let Some(lv) = manager.get_focused_list_view()
+                    && let Some(sm) = get_selection_model(&lv) {
                         let n_items = sm.n_items();
                         for i in 0..n_items {
                             if sm.is_selected(i) {
@@ -440,8 +651,6 @@ fn setup_actions(app: &Application) {
                             }
                         }
                     }
-                }
-            }
         });
     });
     app.add_action(&invert_selection_action);
@@ -453,15 +662,13 @@ fn setup_actions(app: &Application) {
     let settings_s = settings.clone();
     toggle_sidebar_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_s.set_value("show-sidebar", &state);
-            if let Some(app) = app_weak_s.upgrade() {
-                 if let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
-                     if let Some(split_view) = window.content().and_then(|w| w.downcast::<OverlaySplitView>().ok()) {
+            action.set_state(state);
+            let _ = settings_s.set_value("show-sidebar", state);
+            if let Some(app) = app_weak_s.upgrade()
+                 && let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok())
+                     && let Some(split_view) = window.content().and_then(|w| w.downcast::<OverlaySplitView>().ok()) {
                          split_view.set_show_sidebar(state.get::<bool>().unwrap());
                      }
-                 }
-            }
         }
     });
     app.add_action(&toggle_sidebar_action);
@@ -472,8 +679,8 @@ fn setup_actions(app: &Application) {
     let settings_h = settings.clone();
     show_hidden_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_h.set_value("show-hidden", &state);
+            action.set_state(state);
+            let _ = settings_h.set_value("show-hidden", state);
             if let Some(app) = app_weak_h.upgrade() {
                 glib::idle_add_local(move || {
                     app.activate();
@@ -490,8 +697,8 @@ fn setup_actions(app: &Application) {
     let settings_m = settings.clone();
     show_meta_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_m.set_value("show-meta", &state);
+            action.set_state(state);
+            let _ = settings_m.set_value("show-meta", state);
             if let Some(app) = app_weak_m.upgrade() {
                 glib::idle_add_local(move || {
                     app.activate();
@@ -509,7 +716,7 @@ fn setup_actions(app: &Application) {
     zoom_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
             let val = state.get::<i32>().unwrap();
-            if val >= 0 && val <= 5 {
+            if (0..=5).contains(&val) {
                 action.set_state(&val.to_variant());
                 let _ = settings_z.set_value("zoom-level", &val.to_variant());
                 if let Some(app) = app_weak_z.upgrade() {
@@ -526,15 +733,13 @@ fn setup_actions(app: &Application) {
     let zoom_in_action = gio::SimpleAction::new("zoom-in", None);
     let app_weak_zi = app.downgrade();
     zoom_in_action.connect_activate(move |_, _| {
-        if let Some(app) = app_weak_zi.upgrade() {
-            if let Some(action) = app.lookup_action("zoom-level") {
-                if let Some(current) = action.downcast::<gio::SimpleAction>().ok()
+        if let Some(app) = app_weak_zi.upgrade()
+            && let Some(action) = app.lookup_action("zoom-level")
+                && let Some(current) = action.downcast::<gio::SimpleAction>().ok()
                     .and_then(|a| a.state())
                     .and_then(|s| s.get::<i32>()) {
                     app.activate_action("zoom-level", Some(&(current + 1).to_variant()));
                 }
-            }
-        }
     });
     app.add_action(&zoom_in_action);
     app.set_accels_for_action("app.zoom-in", &["<Control>plus", "<Control>equal"]);
@@ -542,15 +747,13 @@ fn setup_actions(app: &Application) {
     let zoom_out_action = gio::SimpleAction::new("zoom-out", None);
     let app_weak_zo = app.downgrade();
     zoom_out_action.connect_activate(move |_, _| {
-        if let Some(app) = app_weak_zo.upgrade() {
-            if let Some(action) = app.lookup_action("zoom-level") {
-                if let Some(current) = action.downcast::<gio::SimpleAction>().ok()
+        if let Some(app) = app_weak_zo.upgrade()
+            && let Some(action) = app.lookup_action("zoom-level")
+                && let Some(current) = action.downcast::<gio::SimpleAction>().ok()
                     .and_then(|a| a.state())
                     .and_then(|s| s.get::<i32>()) {
                     app.activate_action("zoom-level", Some(&(current - 1).to_variant()));
                 }
-            }
-        }
     });
     app.add_action(&zoom_out_action);
     app.set_accels_for_action("app.zoom-out", &["<Control>minus"]);
@@ -560,8 +763,8 @@ fn setup_actions(app: &Application) {
     let settings_v = settings.clone();
     view_type_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_v.set_value("view-type", &state);
+            action.set_state(state);
+            let _ = settings_v.set_value("view-type", state);
             if let Some(app) = app_weak_v.upgrade() {
                 glib::idle_add_local(move || {
                     app.activate();
@@ -577,8 +780,8 @@ fn setup_actions(app: &Application) {
     let settings_st = settings.clone();
     sort_type_action.connect_change_state(move |action, state| {
         if let Some(state) = state {
-            action.set_state(&state);
-            let _ = settings_st.set_value("sort-type", &state);
+            action.set_state(state);
+            let _ = settings_st.set_value("sort-type", state);
             if let Some(app) = app_weak_st.upgrade() {
                 glib::idle_add_local(move || {
                     app.activate();
@@ -601,7 +804,7 @@ fn setup_actions(app: &Application) {
 }
 
 fn show_preferences_window(app: &Application) {
-    let window = app.active_window().unwrap();
+    let Some(window) = app.active_window() else { return; };
     let settings = gio::Settings::new("net.nocopypaste.chvarkov");
 
     let pref_window = adw::PreferencesDialog::builder()
@@ -648,13 +851,12 @@ fn show_preferences_window(app: &Application) {
         let settings_c = settings_path.clone();
         let label_c = path_label.clone();
         dialog.select_folder(Some(&window_c), gio::Cancellable::NONE, move |res| {
-            if let Ok(folder) = res {
-                    if let Some(path) = folder.path() {
+            if let Ok(folder) = res
+                    && let Some(path) = folder.path() {
                         let path_str = path.to_string_lossy().to_string();
                         let _ = settings_c.set_string("default-path", &path_str);
                         label_c.set_label(&path_str);
                     }
-                }
             });
     });
     group.add(&default_path_row);
@@ -1112,7 +1314,7 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
 
     let dialog = adw::AlertDialog::builder()
         .heading("Rename File")
-        .body(&format!("Enter a new name for '{}':", old_name))
+        .body(format!("Enter a new name for '{}':", old_name))
         .extra_child(&entry)
         .build();
 
@@ -1128,7 +1330,11 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
     dialog.connect_response(None, move |_d, response| {
         if response == "rename" {
             let new_name = entry.text().to_string();
-            if !new_name.is_empty() && new_name != old_name_c {
+            if new_name != old_name_c {
+                if let Err(reason) = file_ops::validate_filename(&new_name) {
+                    manager_c.send_toast(&reason);
+                    return;
+                }
                 let file = gio::File::for_path(&path_clone);
                 let manager_inner = manager_c.clone();
                 let name_to_report = new_name.clone();
@@ -1154,46 +1360,6 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
     dialog.present(Some(parent));
 }
 
-fn trash_file(manager: Rc<ColumnManager>, path: PathBuf) {
-    let file = gio::File::for_path(&path);
-    let manager_c = manager.clone();
-    file.trash_async(
-        glib::Priority::DEFAULT,
-        gio::Cancellable::NONE,
-        move |res| {
-            match res {
-                Ok(_) => {
-                    manager_c.send_toast("Moved to Trash");
-                    manager_c.on_file_deleted(&path);
-                },
-                Err(e) => {
-                    manager_c.send_toast(&format!("Error moving to trash: {}", e));
-                }
-            }
-        }
-    );
-}
-
-/// Permanently delete a file or directory (non-recoverable).
-fn permanent_delete_file(manager: Rc<ColumnManager>, path: PathBuf) {
-    let file = gio::File::for_path(&path);
-    let manager_c = manager.clone();
-    file.delete_async(
-        glib::Priority::DEFAULT,
-        gio::Cancellable::NONE,
-        move |res| {
-            match res {
-                Ok(_) => {
-                    manager_c.send_toast("Deleted permanently");
-                    manager_c.on_file_deleted(&path);
-                },
-                Err(e) => {
-                    manager_c.send_toast(&format!("Error deleting: {}", e));
-                }
-            }
-        }
-    );
-}
 
 #[derive(Clone)]
 struct SelectionInfo {
@@ -1224,6 +1390,7 @@ struct ColumnManager {
     current_selection: Rc<RefCell<Option<SelectionInfo>>>,
     preview_window: Rc<RefCell<Option<adw::Window>>>,
     toast_overlay: Rc<RefCell<Option<ToastOverlay>>>,
+    clipboard: Rc<RefCell<Option<clipboard::ClipboardOp>>>,
 }
 
 impl ColumnManager {
@@ -1243,19 +1410,42 @@ impl ColumnManager {
             current_selection: Rc::new(RefCell::new(None)),
             preview_window: Rc::new(RefCell::new(None)),
             toast_overlay: Rc::new(RefCell::new(None)),
+            clipboard: Rc::new(RefCell::new(None)),
         }
     }
 
-    fn send_toast(&self, message: &str) {
+    pub(crate) fn send_toast(&self, message: &str) {
         if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
             overlay.add_toast(Toast::new(message));
+        }
+    }
+
+    /// The directory currently shown by the focused column/view (paste target).
+    pub(crate) fn focused_dir(&self) -> Option<PathBuf> {
+        let view = self.get_focused_list_view()?;
+        for entry in self.entries.borrow().iter() {
+            if entry.focus_target == view {
+                return Some(entry.path.clone());
+            }
+        }
+        if let Some(sel) = self.current_selection.borrow().as_ref()
+            && let Some(parent) = sel.path.parent() { return Some(parent.to_path_buf()); }
+        let settings = gio::Settings::new("net.nocopypaste.chvarkov");
+        let p: String = settings.get("current-path");
+        if p.is_empty() { Some(glib::home_dir()) } else { Some(PathBuf::from(p)) }
+    }
+
+    /// Rebuild the UI from the current path (reuses the existing window).
+    pub(crate) fn refresh(&self) {
+        if let Some(app) = gio::Application::default() {
+            glib::idle_add_local(move || { app.activate(); glib::ControlFlow::Break });
         }
     }
 
     /// Called after a file is trashed or permanently deleted.
     /// Clears the current selection and collapses any child columns that were
     /// opened from the deleted path, keeping only the parent column focused.
-    fn on_file_deleted(&self, deleted_path: &PathBuf) {
+    pub(crate) fn on_file_deleted(&self, deleted_path: &std::path::Path) {
         *self.current_selection.borrow_mut() = None;
 
         let parent = deleted_path.parent().map(|p| p.to_path_buf());
@@ -1381,19 +1571,18 @@ impl ColumnManager {
                     glib::Propagation::Stop
                 }
                 gtk::gdk::Key::Up | gtk::gdk::Key::Down => {
-                    if let Some(lv) = manager_key_clone.get_focused_list_view() {
-                        if let Some(sm) = get_selection_model(&lv) {
+                    if let Some(lv) = manager_key_clone.get_focused_list_view()
+                        && let Some(sm) = get_selection_model(&lv) {
                             let selection = sm.selection();
                             if !selection.is_empty() {
                                  let current = selection.minimum();
                                  if key == gtk::gdk::Key::Up && current > 0 {
                                      sm.select_item(current - 1, true);
-                                 } else if key == gtk::gdk::Key::Down {
+                                 } else if key == gtk::gdk::Key::Down && current + 1 < sm.n_items() {
                                      sm.select_item(current + 1, true);
                                  }
                             }
                         }
-                    }
                     glib::Propagation::Stop
                 }
                 _ => glib::Propagation::Proceed,
@@ -1412,21 +1601,61 @@ impl ColumnManager {
             }
         }
         // 2. Check active Icon/List view
-        if let Some(main) = self.main_view.borrow().as_ref() {
-            if main.has_css_class("focused-grid") || main.has_css_class("focused-list") {
+        if let Some(main) = self.main_view.borrow().as_ref()
+            && (main.has_css_class("focused-grid") || main.has_css_class("focused-list")) {
                 return Some(main.clone());
             }
-        }
         None
     }
 
+    /// Gather every selected item in the currently focused view as SelectionInfo.
+    /// Empty if nothing is focused/selected. Paths resolve via `standard::file`,
+    /// so nested List-view rows are correct.
+    fn collect_selection(&self) -> Vec<SelectionInfo> {
+        let Some(view) = self.get_focused_list_view() else { return Vec::new() };
+        let Some(sm) = get_selection_model(&view) else { return Vec::new() };
+        // Directory the focused view is listing. Used only as a fallback inside
+        // file_info_path when a FileInfo lacks `standard::file` (our DirectoryList
+        // queries always include it, so this is belt-and-suspenders).
+        let base = self
+            .entries
+            .borrow()
+            .iter()
+            .find(|e| e.focus_target == view)
+            .map(|e| e.path.clone())
+            .or_else(|| {
+                self.current_selection
+                    .borrow()
+                    .as_ref()
+                    .and_then(|s| s.path.parent().map(|p| p.to_path_buf()))
+            })
+            .unwrap_or_else(glib::home_dir);
+
+        let selection = sm.selection();
+        let Some(model) = sm.model() else { return Vec::new() };
+        let mut out = Vec::new();
+        for i in 0..selection.size() {
+            let pos = selection.nth(i as u32);
+            let Some(item) = model.item(pos) else { continue };
+            let info = if let Ok(tree_row) = item.clone().downcast::<gtk::TreeListRow>() {
+                tree_row.item().and_downcast::<gio::FileInfo>()
+            } else {
+                item.downcast::<gio::FileInfo>().ok()
+            };
+            if let Some(info) = info {
+                let path = file_info_path(&info, &base);
+                out.push(SelectionInfo { file_info: info, path });
+            }
+        }
+        out
+    }
+
     fn update_preview_if_open(&self) {
-        if let Some(window) = self.preview_window.borrow().as_ref() {
-            if let Some(selection) = self.current_selection.borrow().as_ref() {
+        if let Some(window) = self.preview_window.borrow().as_ref()
+            && let Some(selection) = self.current_selection.borrow().as_ref() {
                 let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
                 window.set_content(Some(&preview_layout));
             }
-        }
     }
 
     fn add_column(&self, path: PathBuf, index: usize) -> Option<gtk::ListView> {
@@ -1508,8 +1737,8 @@ impl ColumnManager {
                     target.grab_focus();
                     return glib::Propagation::Stop;
                 }
-            } else if key == gtk::gdk::Key::Left {
-                if index > 0 {
+            } else if key == gtk::gdk::Key::Left
+                && index > 0 {
                     let entries = self_key_clone.entries.borrow();
                     list_view_focus.remove_css_class("focused-column");
                     let target_entry = &entries[index - 1];
@@ -1524,7 +1753,6 @@ impl ColumnManager {
 
                     return glib::Propagation::Stop;
                 }
-            }
             glib::Propagation::Proceed
         });
         list_view.add_controller(key_controller);
@@ -1532,10 +1760,9 @@ impl ColumnManager {
         Some(list_view)
     }
 
-    fn handle_selection_change_multi(&self, selection_model: &gtk::MultiSelection, base_path: &PathBuf, index: usize) {
+    fn handle_selection_change_multi(&self, selection_model: &gtk::MultiSelection, base_path: &std::path::Path, index: usize) {
         let selection = selection_model.selection();
         if selection.is_empty() {
-            println!("Selection cleared in Column {}", index);
             *self.current_selection.borrow_mut() = None;
             self.update_breadcrumbs(base_path);
 
@@ -1552,22 +1779,20 @@ impl ColumnManager {
 
         // For previews and navigation, we use the first selected item
         let first_idx = selection.minimum();
-        let selected_item = selection_model.model().unwrap().item(first_idx);
+        let Some(model) = selection_model.model() else { return };
+        let selected_item = model.item(first_idx);
 
         if let Some(item) = selected_item {
             // Handle TreeListRow wrapping if it's a List View
             let file_info = if let Ok(tree_row) = item.clone().downcast::<gtk::TreeListRow>() {
-                tree_row.item().and_downcast::<gio::FileInfo>().unwrap()
+                let Some(fi) = tree_row.item().and_downcast::<gio::FileInfo>() else { return };
+                fi
             } else {
-                item.downcast_ref::<gio::FileInfo>().unwrap().clone()
+                let Some(fi) = item.downcast_ref::<gio::FileInfo>() else { return };
+                fi.clone()
             };
 
-            let name = file_info.name();
-            let mut new_path = base_path.clone();
-            new_path.push(&name);
-
-            println!("Selection [Column {}]: {:?} | Type: {:?} | FS is_dir: {}",
-                     index, new_path, file_info.file_type(), new_path.is_dir());
+            let new_path = file_info_path(&file_info, base_path);
 
             *self.current_selection.borrow_mut() = Some(SelectionInfo {
                 file_info: file_info.clone(),
@@ -1610,5 +1835,27 @@ impl ColumnManager {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_info_path_uses_standard_file_attr() {
+        let f = gio::File::for_path("/tmp/some/nested/file.txt");
+        let info = gio::FileInfo::new();
+        info.set_attribute_object("standard::file", &f);
+        let p = file_info_path(&info, std::path::Path::new("/base"));
+        assert_eq!(p, std::path::PathBuf::from("/tmp/some/nested/file.txt"));
+    }
+
+    #[test]
+    fn file_info_path_falls_back_to_base_join_name() {
+        let info = gio::FileInfo::new();
+        info.set_name("leaf.txt");
+        let p = file_info_path(&info, std::path::Path::new("/base/dir"));
+        assert_eq!(p, std::path::PathBuf::from("/base/dir/leaf.txt"));
     }
 }

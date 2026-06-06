@@ -65,7 +65,7 @@ impl Sidebar {
             SidebarItem { name: "Music", icon: "folder-music-symbolic", path: glib::user_special_dir(glib::UserDirectory::Music).unwrap_or_else(glib::home_dir) },
             SidebarItem { name: "Pictures", icon: "folder-pictures-symbolic", path: glib::user_special_dir(glib::UserDirectory::Pictures).unwrap_or_else(glib::home_dir) },
             SidebarItem { name: "Videos", icon: "folder-videos-symbolic", path: glib::user_special_dir(glib::UserDirectory::Videos).unwrap_or_else(glib::home_dir) },
-            SidebarItem { name: "Trash", icon: "user-trash-symbolic", path: glib::home_dir().join(".local/share/Trash/files") },
+            SidebarItem { name: "Trash", icon: "user-trash-symbolic", path: trash_dir() },
         ];
 
         for item in items {
@@ -149,4 +149,11 @@ impl Sidebar {
             pref_footer,
         }
     }
+}
+
+fn trash_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    { glib::home_dir().join(".Trash") }
+    #[cfg(not(target_os = "macos"))]
+    { glib::home_dir().join(".local/share/Trash/files") }
 }
