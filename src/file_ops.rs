@@ -351,14 +351,12 @@ pub fn compress(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     let name = dedupe_file_name(&archive_name(&paths), |n| dir.join(n).exists());
     let out = dir.join(name);
 
-    let manager_c = manager.clone();
     glib::spawn_future_local(async move {
-        let paths_c = paths.clone();
-        let out_c = out.clone();
-        let res = gio::spawn_blocking(move || zip_paths(&paths_c, &out_c)).await;
+        let res = gio::spawn_blocking(move || zip_paths(&paths, &out)).await;
         match res {
-            Ok(Ok(())) => { manager_c.send_toast("Compressed"); manager_c.refresh(); }
-            _ => manager_c.send_toast("Compression failed"),
+            Ok(Ok(())) => { manager.send_toast("Compressed"); manager.refresh(); }
+            Ok(Err(e)) => manager.send_toast(&format!("Compression failed: {e}")),
+            Err(_) => manager.send_toast("Compression failed"),
         }
     });
 }
@@ -370,15 +368,20 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
-    fn add(zip: &mut zip::ZipWriter<std::fs::File>, base: &Path, path: &Path, opts: zip::write::SimpleFileOptions) -> std::io::Result<()> {
-        let name = path.strip_prefix(base.parent().unwrap_or(base)).unwrap_or(path).to_string_lossy().to_string();
-        if path.is_dir() {
-            zip.add_directory(format!("{name}/"), opts).map_err(std::io::Error::from)?;
+    fn add(zip: &mut zip::ZipWriter<std::fs::File>, base: &Path, path: &Path, opts: &zip::write::SimpleFileOptions) -> std::io::Result<()> {
+        let meta = std::fs::symlink_metadata(path)?;
+        if meta.file_type().is_symlink() {
+            return Ok(()); // skip symlinks: avoids loops and out-of-tree path leakage
+        }
+        let rel = path.strip_prefix(base.parent().unwrap_or(base)).unwrap_or(path);
+        let name = rel.to_string_lossy().trim_start_matches('/').to_string();
+        if meta.is_dir() {
+            zip.add_directory(format!("{name}/"), *opts).map_err(std::io::Error::from)?;
             for entry in std::fs::read_dir(path)? {
                 add(zip, base, &entry?.path(), opts)?;
             }
         } else {
-            zip.start_file(name, opts).map_err(std::io::Error::from)?;
+            zip.start_file(name, *opts).map_err(std::io::Error::from)?;
             let data = std::fs::read(path)?;
             zip.write_all(&data)?;
         }
@@ -386,7 +389,7 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
     }
 
     for p in paths {
-        add(&mut zip, p, p, opts)?;
+        add(&mut zip, p, p, &opts)?;
     }
     zip.finish().map_err(std::io::Error::from)?;
     Ok(())
