@@ -1744,8 +1744,12 @@ Replace its body (line ~276):
     create_link_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                let paths: Vec<PathBuf> = manager.collect_selection().into_iter().map(|s| s.path).collect();
-                if !paths.is_empty() { file_ops::symlink(manager.clone(), paths); }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::symlink(manager.clone(), paths);
             }
         });
     });
