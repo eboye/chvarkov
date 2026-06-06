@@ -28,21 +28,20 @@ impl Preview {
         
         let drag_gesture = gtk::GestureDrag::new();
         let sw_weak = scrolled_window.downgrade();
-        
-        let start_width = std::rc::Rc::new(std::cell::Cell::new(200));
-        let start_width_clone = start_width.clone();
-        
-        drag_gesture.connect_drag_begin(move |_, _, _| {
-            if let Some(sw) = sw_weak.upgrade() {
-                start_width_clone.set(sw.width_request());
-            }
-        });
-
-        let sw_weak_update = scrolled_window.downgrade();
-        drag_gesture.connect_drag_update(move |_, offset_x, _| {
-            if let Some(sw) = sw_weak_update.upgrade() {
-                let new_width = (start_width.get() as f64 + offset_x).max(100.0) as i32;
-                sw.set_width_request(new_width);
+        let resizer_weak = resizer.downgrade();
+        drag_gesture.connect_drag_update(move |gesture, offset_x, offset_y| {
+            if let (Some(sw), Some(resizer)) = (sw_weak.upgrade(), resizer_weak.upgrade()) {
+                if let Some((start_x, start_y)) = gesture.start_point() {
+                    // Pointer position in the resizer's own coordinate frame.
+                    let (cur_x, cur_y) = (start_x + offset_x, start_y + offset_y);
+                    // Translate it into the pane's frame. The pane's left edge stays
+                    // fixed during the drag, so the resulting width is stable even as
+                    // the layout reflows — without this the resizer chases itself and
+                    // the edge jumps left/right.
+                    if let Some((width, _)) = resizer.translate_coordinates(&sw, cur_x, cur_y) {
+                        sw.set_width_request((width as i32).max(100));
+                    }
+                }
             }
         });
 
