@@ -25,6 +25,7 @@ use std::cell::RefCell;
 // Use a thread-local for the active manager to avoid unsafe set_data and NonNull issues
 thread_local! {
     static ACTIVE_MANAGER: RefCell<Option<Rc<ColumnManager>>> = const { RefCell::new(None) };
+    static LABEL_TIMER: std::cell::RefCell<Option<glib::SourceId>> = const { std::cell::RefCell::new(None) };
 }
 
 fn main() {
@@ -1192,19 +1193,27 @@ fn build_ui(app: &Application) {
     let view_label_weak = view_btn_label.downgrade();
     let sort_label_weak = sort_btn_label.downgrade();
 
-    // Poll for width changes as a robust workaround in GTK4
+    // Poll for width changes as a robust workaround in GTK4. build_ui re-runs on
+    // every settings toggle, so remove any prior timer before adding a new one to
+    // avoid accumulating perpetual timers.
     let win_weak = window.downgrade();
-    glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-        if let Some(win) = win_weak.upgrade() {
-            let width = win.width();
-            let show = width > 900;
-            if let Some(l) = new_label_weak.upgrade() { l.set_visible(show); }
-            if let Some(l) = view_label_weak.upgrade() { l.set_visible(show); }
-            if let Some(l) = sort_label_weak.upgrade() { l.set_visible(show); }
-            glib::ControlFlow::Continue
-        } else {
-            glib::ControlFlow::Break
+    LABEL_TIMER.with(|t| {
+        if let Some(old) = t.borrow_mut().take() {
+            old.remove();
         }
+        let id = glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+            if let Some(win) = win_weak.upgrade() {
+                let width = win.width();
+                let show = width > 900;
+                if let Some(l) = new_label_weak.upgrade() { l.set_visible(show); }
+                if let Some(l) = view_label_weak.upgrade() { l.set_visible(show); }
+                if let Some(l) = sort_label_weak.upgrade() { l.set_visible(show); }
+                glib::ControlFlow::Continue
+            } else {
+                glib::ControlFlow::Break
+            }
+        });
+        *t.borrow_mut() = Some(id);
     });
 
     // Initial check

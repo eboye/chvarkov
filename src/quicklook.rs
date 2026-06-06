@@ -46,15 +46,22 @@ pub fn open_native_preview(path: &Path) -> bool {
     let Some(cmd) = it.next() else { return false };
     let args: Vec<String> = it.collect();
 
-    // Fire-and-forget: the Child handle is intentionally dropped (the native
-    // previewer owns its own window/lifecycle); we don't track or wait on it.
-    Command::new(cmd)
+    match Command::new(cmd)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .is_ok()
+    {
+        Ok(child) => {
+            std::thread::spawn(move || {
+                let mut child = child;
+                let _ = child.wait();
+            });
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]

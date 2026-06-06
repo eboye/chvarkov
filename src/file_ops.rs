@@ -6,6 +6,17 @@ use libadwaita as adw;
 use adw::prelude::*;
 use crate::ColumnManager;
 
+/// Spawn `cmd`, reaping the child on a detached thread so it doesn't become a
+/// zombie. Returns Ok(()) if it launched.
+fn spawn_reaped(cmd: &mut std::process::Command) -> std::io::Result<()> {
+    let child = cmd.spawn()?;
+    std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 /// Split a file name into (stem, extension-with-dot). Leading-dot files
 /// (".bashrc") are treated as having no extension.
 fn split_name(file_name: &str) -> (String, String) {
@@ -338,7 +349,7 @@ pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBu
 pub fn open_terminal(manager: Rc<ColumnManager>, dir: PathBuf) {
     use std::process::Command;
     #[cfg(target_os = "macos")]
-    let spawned = Command::new("open").arg("-a").arg("Terminal").arg(&dir).spawn().is_ok();
+    let spawned = spawn_reaped(Command::new("open").arg("-a").arg("Terminal").arg(&dir)).is_ok();
 
     #[cfg(not(target_os = "macos"))]
     let spawned = {
@@ -355,7 +366,7 @@ pub fn open_terminal(manager: Rc<ColumnManager>, dir: PathBuf) {
             v
         };
         for (cmd, args) in candidates {
-            if Command::new(&cmd).args(&args).current_dir(&dir).spawn().is_ok() { ok = true; break; }
+            if spawn_reaped(Command::new(&cmd).args(&args).current_dir(&dir)).is_ok() { ok = true; break; }
         }
         ok
     };
@@ -446,14 +457,14 @@ pub fn email(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
             .arg("-e").arg("end tell")
             .arg("-e").arg("end run");
         for p in &paths { cmd.arg(p); }
-        if cmd.spawn().is_err() { manager.send_toast("Could not open Mail"); }
+        if spawn_reaped(&mut cmd).is_err() { manager.send_toast("Could not open Mail"); }
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         let mut cmd = Command::new("xdg-email");
         for p in &paths { cmd.arg("--attach").arg(p); }
-        if cmd.spawn().is_err() { manager.send_toast("xdg-email not available"); }
+        if spawn_reaped(&mut cmd).is_err() { manager.send_toast("xdg-email not available"); }
     }
 }
 
