@@ -534,7 +534,10 @@ fn setup_actions(app: &Application) {
     app.add_action(&copy_name_action);
 
     let sharing_options_action = gio::SimpleAction::new("sharing-options", None);
-    sharing_options_action.connect_activate(|_, _| {
+    let share_app_weak = app.downgrade();
+    sharing_options_action.connect_activate(move |_, _| {
+        let Some(app) = share_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
                 let sel = manager.collect_selection();
@@ -542,7 +545,7 @@ fn setup_actions(app: &Application) {
                 let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
                 if !caps.read { return; }
                 let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
-                file_ops::share(manager.clone(), paths);
+                file_ops::share(manager.clone(), window.clone().upcast(), paths);
             }
         });
     });
