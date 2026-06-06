@@ -1355,9 +1355,10 @@ fn build_ui(app: &Application) {
     window.present();
 }
 
-/// Generic "enter a name" dialog. Validates and renames `path` on disk via
-/// `set_display_name_async` when confirmed. The entry text is pre-selected so
-/// typing replaces it. Confirm response id is "confirm".
+/// Generic "enter a name" dialog. Shows an entry pre-filled with `initial` (text
+/// pre-selected so typing replaces it); on confirm it renames `path` to the entered
+/// name via `set_display_name_async`. Used both for renaming and for naming a
+/// freshly-created item. Confirm response id is "confirm".
 pub(crate) fn show_name_dialog(
     parent: &impl IsA<gtk::Widget>,
     manager: Rc<ColumnManager>,
@@ -1422,8 +1423,10 @@ pub(crate) fn show_name_dialog(
 
     // Pre-select the name after the dialog is mapped so typing replaces it.
     glib::idle_add_local_once(move || {
-        entry_sel.grab_focus();
-        entry_sel.select_region(0, -1);
+        if entry_sel.is_realized() {
+            entry_sel.grab_focus();
+            entry_sel.select_region(0, -1);
+        }
     });
 }
 
