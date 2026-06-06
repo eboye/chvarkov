@@ -1437,11 +1437,21 @@ impl ColumnManager {
     fn collect_selection(&self) -> Vec<SelectionInfo> {
         let Some(view) = self.get_focused_list_view() else { return Vec::new() };
         let Some(sm) = get_selection_model(&view) else { return Vec::new() };
+        // Directory the focused view is listing. Used only as a fallback inside
+        // file_info_path when a FileInfo lacks `standard::file` (our DirectoryList
+        // queries always include it, so this is belt-and-suspenders).
         let base = self
-            .current_selection
+            .entries
             .borrow()
-            .as_ref()
-            .and_then(|s| s.path.parent().map(|p| p.to_path_buf()))
+            .iter()
+            .find(|e| e.focus_target == view)
+            .map(|e| e.path.clone())
+            .or_else(|| {
+                self.current_selection
+                    .borrow()
+                    .as_ref()
+                    .and_then(|s| s.path.parent().map(|p| p.to_path_buf()))
+            })
             .unwrap_or_else(glib::home_dir);
 
         let selection = sm.selection();
