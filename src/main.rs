@@ -1011,7 +1011,7 @@ fn build_ui(app: &Application) {
     let view_icon = match view_type.as_str() {
         "icons" => "view-grid-symbolic",
         "list" => "view-list-symbolic",
-        _ => "view-column-symbolic",
+        _ => "view-columns-symbolic",
     };
 
     let view_label_text = match view_type.as_str() {
