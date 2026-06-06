@@ -1072,7 +1072,10 @@ fn build_ui(app: &Application) {
     let view_icon = match view_type.as_str() {
         "icons" => "view-grid-symbolic",
         "list" => "view-list-symbolic",
-        _ => "view-columns-symbolic",
+        // `view-columns-symbolic` does not exist in the Adwaita icon theme, so it
+        // rendered as a broken/white glyph. `view-dual-symbolic` (side-by-side
+        // panes) exists and recolors with the theme.
+        _ => "view-dual-symbolic",
     };
 
     let view_label_text = match view_type.as_str() {
