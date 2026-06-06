@@ -75,6 +75,23 @@ pub fn is_within(path: &Path, ancestor: &Path) -> bool {
     path.starts_with(ancestor)
 }
 
+/// Validate a name for rename/create. Returns Err(reason) if invalid.
+pub fn validate_filename(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("Name cannot be empty".into());
+    }
+    if name.contains('/') {
+        return Err("Name cannot contain \u{201c}/\u{201d}".into());
+    }
+    if name == "." || name == ".." {
+        return Err("Name cannot be \u{201c}.\u{201d} or \u{201c}..\u{201d}".into());
+    }
+    if name.len() > 255 {
+        return Err("Name is too long".into());
+    }
+    Ok(())
+}
+
 /// True if a rename failed because source and destination are on different filesystems.
 fn is_cross_device(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::CrossesDevices || e.raw_os_error() == Some(18) // EXDEV
@@ -251,9 +268,27 @@ pub fn trash(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     });
 }
 
-/// Permanently delete a batch of paths. One summary toast; collapses columns per success.
-pub fn delete(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
+/// Permanently delete a batch of paths after a confirmation dialog.
+pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBuf>) {
+    if paths.is_empty() { return; }
     glib::spawn_future_local(async move {
+        let n = paths.len();
+        let dialog = adw::AlertDialog::builder()
+            .heading("Delete permanently?")
+            .body(format!(
+                "{} will be permanently deleted. This cannot be undone.",
+                if n == 1 { "1 item".to_string() } else { format!("{n} items") }
+            ))
+            .build();
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("delete", "Delete");
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        if dialog.choose_future(Some(&parent)).await != "delete" {
+            return;
+        }
+
         let mut done = 0usize;
         let mut failed = 0usize;
         for path in &paths {
@@ -357,6 +392,18 @@ mod tests {
         assert!(dst.join("b.txt").exists(), "source file merged in");
         assert_eq!(std::fs::read(dst.join("c.txt")).unwrap(), b"from-src", "colliding file overwritten with source content");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn validate_filename_rules() {
+        assert!(validate_filename("ok.txt").is_ok());
+        assert!(validate_filename("").is_err());
+        assert!(validate_filename("   ").is_err());
+        assert!(validate_filename("a/b").is_err());
+        assert!(validate_filename(".").is_err());
+        assert!(validate_filename("..").is_err());
+        assert!(validate_filename(&"x".repeat(256)).is_err());
+        assert!(validate_filename(".hidden").is_ok()); // leading dot allowed (warning only)
     }
 
     #[test]

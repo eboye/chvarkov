@@ -379,7 +379,10 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.delete", &["Delete"]);
 
     let permanent_delete_action = gio::SimpleAction::new("permanent-delete", None);
-    permanent_delete_action.connect_activate(|_, _| {
+    let perm_del_app_weak = app.downgrade();
+    permanent_delete_action.connect_activate(move |_, _| {
+        let Some(app) = perm_del_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
                 let sel = manager.collect_selection();
@@ -387,7 +390,7 @@ fn setup_actions(app: &Application) {
                 let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
                 if !caps.delete { return; }
                 let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
-                file_ops::delete(manager.clone(), paths);
+                file_ops::delete(manager.clone(), window.clone().upcast(), paths);
             }
         });
     });
@@ -1211,7 +1214,11 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
     dialog.connect_response(None, move |_d, response| {
         if response == "rename" {
             let new_name = entry.text().to_string();
-            if !new_name.is_empty() && new_name != old_name_c {
+            if new_name != old_name_c {
+                if let Err(reason) = file_ops::validate_filename(&new_name) {
+                    manager_c.send_toast(&reason);
+                    return;
+                }
                 let file = gio::File::for_path(&path_clone);
                 let manager_inner = manager_c.clone();
                 let name_to_report = new_name.clone();
