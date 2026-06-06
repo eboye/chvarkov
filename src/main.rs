@@ -448,15 +448,51 @@ fn setup_actions(app: &Application) {
     app.add_action(&open_terminal_action);
 
     let copy_path_action = gio::SimpleAction::new("copy-path", None);
-    copy_path_action.connect_activate(|_, _| {});
+    copy_path_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let text = manager.collect_selection().into_iter()
+                    .map(|s| s.path.to_string_lossy().to_string())
+                    .collect::<Vec<_>>().join("\n");
+                if !text.is_empty() {
+                    if let Some(d) = gtk::gdk::Display::default() { d.clipboard().set_text(&text); }
+                    manager.send_toast("Path copied");
+                }
+            }
+        });
+    });
     app.add_action(&copy_path_action);
 
     let copy_uri_action = gio::SimpleAction::new("copy-uri", None);
-    copy_uri_action.connect_activate(|_, _| {});
+    copy_uri_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let text = manager.collect_selection().into_iter()
+                    .map(|s| gio::File::for_path(&s.path).uri().to_string())
+                    .collect::<Vec<_>>().join("\n");
+                if !text.is_empty() {
+                    if let Some(d) = gtk::gdk::Display::default() { d.clipboard().set_text(&text); }
+                    manager.send_toast("URI copied");
+                }
+            }
+        });
+    });
     app.add_action(&copy_uri_action);
 
     let copy_name_action = gio::SimpleAction::new("copy-name", None);
-    copy_name_action.connect_activate(|_, _| {});
+    copy_name_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let text = manager.collect_selection().into_iter()
+                    .map(|s| s.file_info.display_name().to_string())
+                    .collect::<Vec<_>>().join("\n");
+                if !text.is_empty() {
+                    if let Some(d) = gtk::gdk::Display::default() { d.clipboard().set_text(&text); }
+                    manager.send_toast("Name copied");
+                }
+            }
+        });
+    });
     app.add_action(&copy_name_action);
 
     let sharing_options_action = gio::SimpleAction::new("sharing-options", None);
