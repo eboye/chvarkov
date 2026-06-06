@@ -305,6 +305,35 @@ pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBu
     });
 }
 
+/// Open a terminal at `dir`.
+pub fn open_terminal(manager: Rc<ColumnManager>, dir: PathBuf) {
+    use std::process::Command;
+    #[cfg(target_os = "macos")]
+    let spawned = Command::new("open").arg("-a").arg("Terminal").arg(&dir).spawn().is_ok();
+
+    #[cfg(not(target_os = "macos"))]
+    let spawned = {
+        let mut ok = false;
+        let candidates: Vec<(String, Vec<String>)> = {
+            let mut v = Vec::new();
+            if let Ok(t) = std::env::var("TERMINAL") { v.push((t, vec![])); }
+            v.push(("gnome-terminal".into(), vec!["--working-directory".into(), dir.to_string_lossy().to_string()]));
+            v.push(("konsole".into(), vec!["--workdir".into(), dir.to_string_lossy().to_string()]));
+            v.push(("kitty".into(), vec!["--directory".into(), dir.to_string_lossy().to_string()]));
+            v.push(("alacritty".into(), vec!["--working-directory".into(), dir.to_string_lossy().to_string()]));
+            v.push(("foot".into(), vec![]));
+            v.push(("xterm".into(), vec![]));
+            v
+        };
+        for (cmd, args) in candidates {
+            if Command::new(&cmd).args(&args).current_dir(&dir).spawn().is_ok() { ok = true; break; }
+        }
+        ok
+    };
+
+    if !spawned { manager.send_toast("No terminal found"); }
+}
+
 /// Create a symlink named "<name> link" beside each source (numbered on collision).
 pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     let mut made = 0usize;

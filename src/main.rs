@@ -455,7 +455,16 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.permanent-delete", &["<Shift>Delete"]);
 
     let open_terminal_action = gio::SimpleAction::new("open-terminal", None);
-    open_terminal_action.connect_activate(|_, _| {});
+    open_terminal_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let dir = manager.collect_selection().into_iter().next()
+                    .and_then(|s| if s.path.is_dir() { Some(s.path) } else { s.path.parent().map(|p| p.to_path_buf()) })
+                    .or_else(|| manager.focused_dir());
+                if let Some(dir) = dir { file_ops::open_terminal(manager.clone(), dir); }
+            }
+        });
+    });
     app.add_action(&open_terminal_action);
 
     let copy_path_action = gio::SimpleAction::new("copy-path", None);
