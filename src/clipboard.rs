@@ -76,20 +76,31 @@ pub fn read_external<F: Fn(Option<ClipboardOp>) + 'static>(callback: F) {
         glib::Priority::DEFAULT,
         gio::Cancellable::NONE,
         move |res| {
-            let Ok((stream, _mime)) = res else { callback(None); return };
-            // 1 MiB is far more than any realistic clipboard URI list.
-            stream.read_bytes_async(
-                1 << 20,
+            let Ok((stream, mime)) = res else { callback(None); return };
+            // Drain the whole stream (read_bytes can short-read) into memory.
+            let mem = gio::MemoryOutputStream::new_resizable();
+            let mem2 = mem.clone();
+            mem.splice_async(
+                &stream,
+                gio::OutputStreamSpliceFlags::CLOSE_SOURCE | gio::OutputStreamSpliceFlags::CLOSE_TARGET,
                 glib::Priority::DEFAULT,
                 gio::Cancellable::NONE,
-                move |res| {
-                    let Ok(bytes) = res else { callback(None); return };
+                move |spliced| {
+                    if spliced.is_err() { callback(None); return; }
+                    let bytes = mem2.steal_as_bytes();
                     let text = String::from_utf8_lossy(&bytes).into_owned();
                     let paths = parse_uri_lines(&text);
+                    // Only the GNOME payload carries a cut/copy verb; other MIME
+                    // types are always a Copy.
+                    let mode = if mime.as_str() == "x-special/gnome-copied-files" {
+                        clipboard_mode(&text)
+                    } else {
+                        Mode::Copy
+                    };
                     let op = if paths.is_empty() {
                         None
                     } else {
-                        Some(ClipboardOp { mode: clipboard_mode(&text), paths })
+                        Some(ClipboardOp { mode, paths })
                     };
                     callback(op);
                 },
