@@ -2033,8 +2033,6 @@ impl ColumnManager {
     }
 
     /// Show the progress bar for a new operation and return its cancel flag.
-    // TODO: remove allow when wired in Task 3
-    #[allow(dead_code)]
     fn show_progress(&self, initial_label: &str) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
         let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         *self.cancel_flag.borrow_mut() = Some(flag.clone());
@@ -2044,15 +2042,11 @@ impl ColumnManager {
         flag
     }
 
-    // TODO: remove allow when wired in Task 3
-    #[allow(dead_code)]
     fn update_progress(&self, fraction: f64, label: &str) {
         if let Some(bar) = self.progress_bar.borrow().as_ref() { bar.set_fraction(fraction.clamp(0.0, 1.0)); }
         if let Some(l) = self.progress_label.borrow().as_ref() { l.set_text(label); }
     }
 
-    // TODO: remove allow when wired in Task 3
-    #[allow(dead_code)]
     fn hide_progress(&self) {
         if let Some(b) = self.progress_box.borrow().as_ref() { b.set_visible(false); }
         *self.cancel_flag.borrow_mut() = None;
