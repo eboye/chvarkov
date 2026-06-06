@@ -6,14 +6,29 @@
 
 ## ✨ Features
 
-- **Miller Columns Navigation:** Navigate deep directory structures with ease using side-by-side columns.
+### Navigation & UI
+- **Miller Columns Navigation:** Navigate deep directory structures with ease using side-by-side columns (plus Icon and List views).
 - **Cross-Platform:** Native support for both **Linux (GNOME)** and **macOS**.
 - **Native Resizing:** Smoothly resize any column or preview pane using native handles.
-- **Live Previews:** Instantly view file details, metadata, and large icons when a file is selected.
+- **Live Previews:** Instantly view file details, metadata, large icons, images, video, and syntax-highlighted text.
 - **Modern UI:** Adheres to Libadwaita standards for a clean, responsive interface.
 - **Adaptive Sidebar:** Automatically collapses into an overlay on smaller screens.
 - **Native Thumbnails:** Native support for file thumbnails in all view types.
-- **Keyboard First:** Fully navigable via keyboard with standard shortcuts.
+- **Keyboard First & Multi-Selection:** Fully navigable via keyboard, with standard multi-selection (Shift, Ctrl, Ctrl+A).
+
+### File Operations
+- **Full Cut / Copy / Paste** with **system-clipboard interop** — copy in chvarkov and paste in Finder / GNOME Files (and vice-versa).
+- **Move to… / Copy to…**, **Rename**, **Create Link** (symlink), and **Compress to Zip**.
+- **Move to Trash** and **Delete Permanently** (with a confirmation prompt), all operating on the whole selection.
+- **Open in Terminal**, **Copy Path / URI / Name**, and **Email / Share** (native macOS Share sheet; `xdg-email` on Linux).
+
+### Safe by design
+- **Permission-aware:** actions you don't have rights to perform are hidden from the menu (driven by the filesystem's reported capabilities).
+- **Conflict handling:** Replace / Skip / Keep Both on name collisions, with **directory Merge** instead of destructive overwrite, and an "apply to all" option for batches.
+- **Data-loss guards** (modeled on GNOME Nautilus): refuses to copy/move a folder into itself, never silently replaces a directory, preserves symlinks instead of dereferencing them, and validates rename input.
+
+### Linux integration
+- **Default file manager:** can be registered to open folders via `xdg-open` and "Open With" (see [Set as default file manager](#-set-as-default-file-manager-linux)).
 
 ## ⌨️ Keyboard Shortcuts
 
@@ -31,8 +46,14 @@
 | **Rename** | `F2` |
 | **Create Link** | `Ctrl` + `Shift` + `M` |
 | **Move to Trash** | `Delete` (Linux) / `Cmd` + `Delete` (macOS) |
+| **Delete Permanently** | `Shift` + `Delete` |
+| **Select All** | `Ctrl` + `A` |
+| **Preferences** | `Ctrl` + `,` |
+| **Zoom In / Out** | `Ctrl` + `+` / `Ctrl` + `-` |
 | **View Properties** | `Alt` + `Return` |
 | **Trigger Context Menu** | `Menu` key or `Shift` + `F10` |
+
+> Additional operations — Move to…, Copy to…, Compress, Open in Terminal, Copy Path/URI/Name, Email, Share — are available from the right-click context menu (only the entries you have permission to perform are shown).
 
 ## 🚀 Installation
 
@@ -169,6 +190,20 @@ For a development experience similar to `npm watch`, we recommend using `cargo-w
    ```bash
    cargo watch -c -x run
    ```
+
+## 🗂 Set as default file manager (Linux)
+
+After installing (`cargo xtask install`), register chvarkov as the handler for folders so it opens from `xdg-open`, file links, and the "Open With" menu:
+
+```bash
+xdg-mime default net.nocopypaste.chvarkov.desktop inode/directory
+```
+
+Then opening a folder launches chvarkov at that path:
+
+```bash
+xdg-open ~/Downloads
+```
 
 ## 🤝 Contributing
 
