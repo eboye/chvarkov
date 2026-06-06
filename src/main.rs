@@ -1210,6 +1210,9 @@ fn build_ui(app: &Application) {
                 if let Some(l) = sort_label_weak.upgrade() { l.set_visible(show); }
                 glib::ControlFlow::Continue
             } else {
+                // Window gone: forget our stored id so a later build_ui doesn't
+                // try to remove an already-finished source.
+                LABEL_TIMER.with(|t| *t.borrow_mut() = None);
                 glib::ControlFlow::Break
             }
         });
