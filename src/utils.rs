@@ -104,6 +104,13 @@ fn build_context_menu(shift: bool) -> gio::Menu {
     let (count, caps) = crate::selection_caps();
     let menu = gio::Menu::new();
 
+    if crate::target_dir_writable() {
+        let new_section = gio::Menu::new();
+        new_section.append(Some("New Folder"), Some("app.new-folder"));
+        new_section.append(Some("New Empty File"), Some("app.new-file"));
+        menu.append_section(None, &new_section);
+    }
+
     if count >= 1 {
         let s = gio::Menu::new();
         s.append(Some("Open"), Some("app.open"));

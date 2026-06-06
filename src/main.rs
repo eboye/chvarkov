@@ -222,6 +222,33 @@ pub(crate) fn selection_caps() -> (usize, utils::Caps) {
     })
 }
 
+/// Whether the directory new items would be created in is writable. Used to
+/// gate the context-menu "New" section. Missing attribute defaults to writable.
+pub(crate) fn target_dir_writable() -> bool {
+    ACTIVE_MANAGER.with(|m| {
+        if let Some(manager) = m.borrow().as_ref()
+            && let Some(dir) = manager.focused_dir()
+        {
+            let file = gio::File::for_path(&dir);
+            return match file.query_info(
+                "access::can-write",
+                gio::FileQueryInfoFlags::NONE,
+                gio::Cancellable::NONE,
+            ) {
+                Ok(info) => {
+                    if info.has_attribute("access::can-write") {
+                        info.boolean("access::can-write")
+                    } else {
+                        true
+                    }
+                }
+                Err(_) => false,
+            };
+        }
+        false
+    })
+}
+
 fn get_selection_model(widget: &gtk::Widget) -> Option<gtk::MultiSelection> {
     if let Ok(lv) = widget.clone().downcast::<gtk::ListView>() {
         return lv.model().and_downcast::<gtk::MultiSelection>();
@@ -423,6 +450,36 @@ fn setup_actions(app: &Application) {
     });
     app.add_action(&rename_action);
     app.set_accels_for_action("app.rename", &["F2"]);
+
+    let new_folder_action = gio::SimpleAction::new("new-folder", None);
+    let new_folder_app_weak = app.downgrade();
+    new_folder_action.connect_activate(move |_, _| {
+        let Some(app) = new_folder_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let Some(dir) = manager.focused_dir() else { return };
+                file_ops::create_folder(manager.clone(), window.clone().upcast(), dir);
+            }
+        });
+    });
+    app.add_action(&new_folder_action);
+    app.set_accels_for_action("app.new-folder", &["<Shift><Control>n"]);
+
+    let new_file_action = gio::SimpleAction::new("new-file", None);
+    let new_file_app_weak = app.downgrade();
+    new_file_action.connect_activate(move |_, _| {
+        let Some(app) = new_file_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let Some(dir) = manager.focused_dir() else { return };
+                file_ops::create_file(manager.clone(), window.clone().upcast(), dir);
+            }
+        });
+    });
+    app.add_action(&new_file_action);
+    app.set_accels_for_action("app.new-file", &["<Control>n"]);
 
     let create_link_action = gio::SimpleAction::new("create-link", None);
     create_link_action.connect_activate(|_, _| {
@@ -1072,6 +1129,27 @@ fn build_ui(app: &Application) {
         .build();
     header_bar.pack_start(&sort_type_btn);
 
+    // New (create) Menu
+    let new_menu = gio::Menu::new();
+    new_menu.append(Some("New Folder"), Some("app.new-folder"));
+    new_menu.append(Some("New Empty File"), Some("app.new-file"));
+
+    let new_btn_content = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    new_btn_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
+    let new_btn_label = gtk::Label::new(Some("New"));
+    new_btn_label.add_css_class("adaptive-label");
+    new_btn_content.append(&new_btn_label);
+
+    let new_type_btn = gtk::MenuButton::builder()
+        .child(&new_btn_content)
+        .tooltip_text("Create New")
+        .menu_model(&new_menu)
+        .build();
+    header_bar.pack_start(&new_type_btn);
+
     // Zoom Controls
     let zoom_group = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -1101,6 +1179,7 @@ fn build_ui(app: &Application) {
     let settings = gio::Settings::new("net.nocopypaste.chvarkov");
 
     // Responsive labels logic
+    let new_label_weak = new_btn_label.downgrade();
     let view_label_weak = view_btn_label.downgrade();
     let sort_label_weak = sort_btn_label.downgrade();
 
@@ -1110,6 +1189,7 @@ fn build_ui(app: &Application) {
         if let Some(win) = win_weak.upgrade() {
             let width = win.width();
             let show = width > 900;
+            if let Some(l) = new_label_weak.upgrade() { l.set_visible(show); }
             if let Some(l) = view_label_weak.upgrade() { l.set_visible(show); }
             if let Some(l) = sort_label_weak.upgrade() { l.set_visible(show); }
             glib::ControlFlow::Continue
@@ -1120,6 +1200,7 @@ fn build_ui(app: &Application) {
 
     // Initial check
     let initial_width = window.width();
+    new_btn_label.set_visible(initial_width > 900);
     view_btn_label.set_visible(initial_width > 900);
     sort_btn_label.set_visible(initial_width > 900);
 
@@ -1355,36 +1436,50 @@ fn build_ui(app: &Application) {
     window.present();
 }
 
-fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, old_name_str: &str, path: PathBuf) {
-    let old_name = old_name_str.to_string();
+/// Generic "enter a name" dialog. Shows an entry pre-filled with `initial` (text
+/// pre-selected so typing replaces it); on confirm it renames `path` to the entered
+/// name via `set_display_name_async`. Used both for renaming and for naming a
+/// freshly-created item. Confirm response id is "confirm".
+pub(crate) fn show_name_dialog(
+    parent: &impl IsA<gtk::Widget>,
+    manager: Rc<ColumnManager>,
+    heading: &str,
+    body: &str,
+    confirm_label: &str,
+    initial: &str,
+    path: PathBuf,
+) {
+    let initial = initial.to_string();
     let entry = gtk::Entry::builder()
-        .text(&old_name)
+        .text(&initial)
         .activates_default(true)
         .margin_top(12)
         .margin_bottom(12)
         .margin_start(12)
         .margin_end(12)
         .build();
+    // Clone for the post-present selection closure (the response closure moves `entry`).
+    let entry_sel = entry.clone();
 
     let dialog = adw::AlertDialog::builder()
-        .heading("Rename File")
-        .body(format!("Enter a new name for '{}':", old_name))
+        .heading(heading)
+        .body(body)
         .extra_child(&entry)
         .build();
 
     dialog.add_response("cancel", "Cancel");
-    dialog.add_response("rename", "Rename");
-    dialog.set_default_response(Some("rename"));
+    dialog.add_response("confirm", confirm_label);
+    dialog.set_default_response(Some("confirm"));
     dialog.set_close_response("cancel");
-    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Suggested);
 
     let path_clone = path.clone();
     let manager_c = manager.clone();
-    let old_name_c = old_name.clone();
+    let initial_c = initial.clone();
     dialog.connect_response(None, move |_d, response| {
-        if response == "rename" {
+        if response == "confirm" {
             let new_name = entry.text().to_string();
-            if new_name != old_name_c {
+            if new_name != initial_c {
                 if let Err(reason) = file_ops::validate_filename(&new_name) {
                     manager_c.send_toast(&reason);
                     return;
@@ -1396,22 +1491,36 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
                     &new_name,
                     glib::Priority::DEFAULT,
                     gio::Cancellable::NONE,
-                    move |res| {
-                        match res {
-                            Ok(_) => {
-                                manager_inner.send_toast(&format!("Renamed to {}", name_to_report));
-                            },
-                            Err(e) => {
-                                manager_inner.send_toast(&format!("Error: {}", e));
-                            }
-                        }
-                    }
+                    move |res| match res {
+                        Ok(_) => manager_inner.send_toast(&format!("Renamed to {}", name_to_report)),
+                        Err(e) => manager_inner.send_toast(&format!("Error: {}", e)),
+                    },
                 );
             }
         }
     });
 
     dialog.present(Some(parent));
+
+    // Pre-select the name after the dialog is mapped so typing replaces it.
+    glib::idle_add_local_once(move || {
+        if entry_sel.is_realized() {
+            entry_sel.grab_focus();
+            entry_sel.select_region(0, -1);
+        }
+    });
+}
+
+fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, old_name_str: &str, path: PathBuf) {
+    show_name_dialog(
+        parent,
+        manager,
+        "Rename File",
+        &format!("Enter a new name for '{}':", old_name_str),
+        "Rename",
+        old_name_str,
+        path,
+    );
 }
 
 
