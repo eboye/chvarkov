@@ -44,10 +44,18 @@ pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
     dir.join(name)
 }
 
-/// Recursively copy `src` to `dst` (file or directory). `dst` is the full
-/// target path (not a parent directory).
+/// Recursively copy `src` to `dst` (file, directory, or symlink). `dst` is the
+/// full target path. Symlinks are recreated (not dereferenced). Copying a
+/// directory onto an existing directory MERGES (existing files are kept; only
+/// colliding leaf files are overwritten).
 pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if src.is_dir() {
+    let meta = std::fs::symlink_metadata(src)?;
+    if meta.file_type().is_symlink() {
+        if let Some(parent) = dst.parent() { std::fs::create_dir_all(parent)?; }
+        let _ = std::fs::remove_file(dst);
+        std::os::unix::fs::symlink(std::fs::read_link(src)?, dst)?;
+        Ok(())
+    } else if meta.is_dir() {
         std::fs::create_dir_all(dst)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
@@ -55,12 +63,16 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
         Ok(())
     } else {
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        if let Some(parent) = dst.parent() { std::fs::create_dir_all(parent)?; }
         std::fs::copy(src, dst)?;
         Ok(())
     }
+}
+
+/// True if `path` equals `ancestor` or is nested under it. Inputs should be
+/// canonicalized by the caller.
+pub fn is_within(path: &Path, ancestor: &Path) -> bool {
+    path == ancestor || path.starts_with(ancestor)
 }
 
 /// True if a rename failed because source and destination are on different filesystems.
@@ -81,20 +93,51 @@ pub fn transfer(
     kind: TransferKind,
 ) {
     glib::spawn_future_local(async move {
-        let mut apply_to_all: Option<&'static str> = None; // "replace" | "skip" | "keep"
+        let mut apply_to_all: Option<&'static str> = None;
         let mut done = 0usize;
         let mut skipped = 0usize;
         let mut failed = 0usize;
 
+        let dest_canon = dest_dir.canonicalize().ok();
+
         for src in sources {
             let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+            let src_canon = src.canonicalize().ok();
+
+            // Guard: don't place a directory inside itself or a descendant.
+            if src.is_dir() {
+                if let (Some(sc), Some(dc)) = (&src_canon, &dest_canon) {
+                    if is_within(dc, sc) {
+                        manager.send_toast(&format!("Can't place \u{201c}{name}\u{201d} inside itself"));
+                        failed += 1;
+                        continue;
+                    }
+                }
+            }
+
             let mut target = dest_dir.join(&name);
 
+            // Guard: source and target resolve to the same path.
+            let same_path = match (&src_canon, target.canonicalize().ok()) {
+                (Some(a), Some(b)) => *a == b,
+                _ => false,
+            };
+            if same_path {
+                match kind {
+                    TransferKind::Copy => { target = unique_destination(&dest_dir, &name); }
+                    TransferKind::Move => { skipped += 1; continue; }
+                }
+            }
+
+            // Conflict resolution.
+            let mut merge_dirs = false;
             if target.exists() {
+                let target_is_symlink = target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
+                let both_dirs = src.is_dir() && target.is_dir() && !target_is_symlink;
                 let choice = match apply_to_all {
                     Some(c) => c,
                     None => {
-                        let (c, all) = ask_conflict(&parent, &name).await;
+                        let (c, all) = ask_conflict(&parent, &name, both_dirs).await;
                         if all { apply_to_all = Some(c); }
                         c
                     }
@@ -102,15 +145,19 @@ pub fn transfer(
                 match choice {
                     "skip" => { skipped += 1; continue; }
                     "keep" => { target = unique_destination(&dest_dir, &name); }
-                    _ => { // replace: remove existing first
-                        let t = target.clone();
-                        let removed = gio::spawn_blocking(move || {
-                            if t.is_dir() { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
-                        }).await;
-                        if !matches!(removed, Ok(Ok(()))) {
-                            manager.send_toast(&format!("Could not replace {name}"));
-                            failed += 1;
-                            continue;
+                    _ => {
+                        if both_dirs {
+                            merge_dirs = true;
+                        } else {
+                            let t = target.clone();
+                            let removed = gio::spawn_blocking(move || {
+                                if t.is_dir() { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
+                            }).await;
+                            if !matches!(removed, Ok(Ok(()))) {
+                                manager.send_toast(&format!("Could not replace {name}"));
+                                failed += 1;
+                                continue;
+                            }
                         }
                     }
                 }
@@ -122,14 +169,18 @@ pub fn transfer(
                 match kind {
                     TransferKind::Copy => copy_recursive(&src_c, &target_c),
                     TransferKind::Move => {
-                        // Fast rename; only fall back to copy+delete across filesystems.
-                        match std::fs::rename(&src_c, &target_c) {
-                            Ok(()) => Ok(()),
-                            Err(e) if is_cross_device(&e) => {
-                                copy_recursive(&src_c, &target_c)?;
-                                if src_c.is_dir() { std::fs::remove_dir_all(&src_c) } else { std::fs::remove_file(&src_c) }
+                        if merge_dirs || target_c.exists() {
+                            copy_recursive(&src_c, &target_c)?;
+                            if src_c.is_dir() { std::fs::remove_dir_all(&src_c) } else { std::fs::remove_file(&src_c) }
+                        } else {
+                            match std::fs::rename(&src_c, &target_c) {
+                                Ok(()) => Ok(()),
+                                Err(e) if is_cross_device(&e) => {
+                                    copy_recursive(&src_c, &target_c)?;
+                                    if src_c.is_dir() { std::fs::remove_dir_all(&src_c) } else { std::fs::remove_file(&src_c) }
+                                }
+                                Err(e) => Err(e),
                             }
-                            Err(e) => Err(e),
                         }
                     }
                 }
@@ -151,15 +202,18 @@ pub fn transfer(
 }
 
 /// Show the collision dialog; returns (choice, apply_to_all).
-async fn ask_conflict(parent: &gtk::Window, name: &str) -> (&'static str, bool) {
+/// `merge` relabels the overwrite action "Merge" (directory-into-directory).
+async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool) -> (&'static str, bool) {
     let dialog = adw::AlertDialog::builder()
         .heading("Item already exists")
         .body(format!("\u{201c}{name}\u{201d} already exists in the destination. What do you want to do?"))
         .build();
     dialog.add_response("skip", "Skip");
     dialog.add_response("keep", "Keep Both");
-    dialog.add_response("replace", "Replace");
-    dialog.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
+    dialog.add_response("replace", if merge { "Merge" } else { "Replace" });
+    if !merge {
+        dialog.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
+    }
     dialog.set_default_response(Some("keep"));
     dialog.set_close_response("skip");
 
@@ -274,6 +328,44 @@ mod tests {
         assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x.txt"));
         std::fs::write(tmp.join("x.txt"), b"").unwrap();
         assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x (copy).txt"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn is_within_cases() {
+        use std::path::Path;
+        assert!(is_within(Path::new("/a/b"), Path::new("/a")));
+        assert!(is_within(Path::new("/a"), Path::new("/a")));
+        assert!(!is_within(Path::new("/a"), Path::new("/a/b")));
+        assert!(!is_within(Path::new("/x/y"), Path::new("/a")));
+    }
+
+    #[test]
+    fn copy_recursive_merges_into_existing_dir() {
+        let tmp = std::env::temp_dir().join(format!("chv_merge_{}", std::process::id()));
+        let src = tmp.join("src");
+        let dst = tmp.join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("b.txt"), b"b").unwrap();
+        std::fs::write(dst.join("a.txt"), b"a").unwrap();
+        copy_recursive(&src, &dst).unwrap();
+        assert!(dst.join("a.txt").exists(), "existing dest file preserved");
+        assert!(dst.join("b.txt").exists(), "source file merged in");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn copy_recursive_preserves_symlink() {
+        let tmp = std::env::temp_dir().join(format!("chv_link_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let real = tmp.join("real.txt");
+        std::fs::write(&real, b"hi").unwrap();
+        let link = tmp.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let dst = tmp.join("copied");
+        copy_recursive(&link, &dst).unwrap();
+        assert!(dst.symlink_metadata().unwrap().file_type().is_symlink());
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
