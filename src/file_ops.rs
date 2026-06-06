@@ -42,7 +42,7 @@ pub fn dedupe_file_name(file_name: &str, exists: impl Fn(&str) -> bool) -> Strin
 /// distinct from the " (copy)" scheme used for duplicates. The number is
 /// inserted before `ext` (pass "" for no extension). `base` and `ext` are
 /// expected to be pre-split (ext starts with `.` or is empty).
-// TODO: remove #[allow(dead_code)] once create_folder/create_file wire this in (Task 4).
+// TODO: remove #[allow(dead_code)] once create_folder/create_file are wired in (Task 4).
 #[allow(dead_code)]
 pub fn untitled_name(base: &str, ext: &str, exists: impl Fn(&str) -> bool) -> String {
     let first = format!("{base}{ext}");
@@ -560,6 +560,60 @@ pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
         manager.send_toast(&format!("Created {made} link(s)"));
         manager.refresh();
     }
+}
+
+/// Create a new empty folder in `dir` with a non-colliding "untitled folder"
+/// name, then open the naming dialog so the user can rename it. The monitored
+/// DirectoryList surfaces the new folder automatically.
+// TODO: remove #[allow(dead_code)] once wired in (Task 4).
+#[allow(dead_code)]
+pub fn create_folder(manager: Rc<ColumnManager>, parent: gtk::Window, dir: PathBuf) {
+    let name = untitled_name("untitled folder", "", |n| dir.join(n).exists());
+    let new_path = dir.join(&name);
+    let file = gio::File::for_path(&new_path);
+    file.make_directory_async(
+        glib::Priority::DEFAULT,
+        gio::Cancellable::NONE,
+        move |res| match res {
+            Ok(_) => crate::show_name_dialog(
+                &parent,
+                manager,
+                "New Folder",
+                "Name the new folder:",
+                "Create",
+                &name,
+                new_path,
+            ),
+            Err(e) => manager.send_toast(&format!("Could not create folder: {}", e)),
+        },
+    );
+}
+
+/// Create a new empty file in `dir` with a non-colliding "untitled file" name,
+/// then open the naming dialog so the user can rename it.
+// TODO: remove #[allow(dead_code)] once wired in (Task 4).
+#[allow(dead_code)]
+pub fn create_file(manager: Rc<ColumnManager>, parent: gtk::Window, dir: PathBuf) {
+    let name = untitled_name("untitled file", "", |n| dir.join(n).exists());
+    let new_path = dir.join(&name);
+    let file = gio::File::for_path(&new_path);
+    file.create_async(
+        gio::FileCreateFlags::NONE,
+        glib::Priority::DEFAULT,
+        gio::Cancellable::NONE,
+        move |res| match res {
+            Ok(_stream) => crate::show_name_dialog(
+                &parent,
+                manager,
+                "New Empty File",
+                "Name the new file:",
+                "Create",
+                &name,
+                new_path,
+            ),
+            Err(e) => manager.send_toast(&format!("Could not create file: {}", e)),
+        },
+    );
 }
 
 #[cfg(test)]
