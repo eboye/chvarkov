@@ -222,6 +222,33 @@ pub(crate) fn selection_caps() -> (usize, utils::Caps) {
     })
 }
 
+/// Whether the directory new items would be created in is writable. Used to
+/// gate the context-menu "New" section. Missing attribute defaults to writable.
+pub(crate) fn target_dir_writable() -> bool {
+    ACTIVE_MANAGER.with(|m| {
+        if let Some(manager) = m.borrow().as_ref()
+            && let Some(dir) = manager.focused_dir()
+        {
+            let file = gio::File::for_path(&dir);
+            return match file.query_info(
+                "access::can-write",
+                gio::FileQueryInfoFlags::NONE,
+                gio::Cancellable::NONE,
+            ) {
+                Ok(info) => {
+                    if info.has_attribute("access::can-write") {
+                        info.boolean("access::can-write")
+                    } else {
+                        true
+                    }
+                }
+                Err(_) => false,
+            };
+        }
+        false
+    })
+}
+
 fn get_selection_model(widget: &gtk::Widget) -> Option<gtk::MultiSelection> {
     if let Ok(lv) = widget.clone().downcast::<gtk::ListView>() {
         return lv.model().and_downcast::<gtk::MultiSelection>();
@@ -423,6 +450,36 @@ fn setup_actions(app: &Application) {
     });
     app.add_action(&rename_action);
     app.set_accels_for_action("app.rename", &["F2"]);
+
+    let new_folder_action = gio::SimpleAction::new("new-folder", None);
+    let nf_app_weak = app.downgrade();
+    new_folder_action.connect_activate(move |_, _| {
+        let Some(app) = nf_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let Some(dir) = manager.focused_dir() else { return };
+                file_ops::create_folder(manager.clone(), window.clone().upcast(), dir);
+            }
+        });
+    });
+    app.add_action(&new_folder_action);
+    app.set_accels_for_action("app.new-folder", &["<Shift><Control>n"]);
+
+    let new_file_action = gio::SimpleAction::new("new-file", None);
+    let nfile_app_weak = app.downgrade();
+    new_file_action.connect_activate(move |_, _| {
+        let Some(app) = nfile_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let Some(dir) = manager.focused_dir() else { return };
+                file_ops::create_file(manager.clone(), window.clone().upcast(), dir);
+            }
+        });
+    });
+    app.add_action(&new_file_action);
+    app.set_accels_for_action("app.new-file", &["<Control>n"]);
 
     let create_link_action = gio::SimpleAction::new("create-link", None);
     create_link_action.connect_activate(|_, _| {
@@ -1071,6 +1128,27 @@ fn build_ui(app: &Application) {
         .menu_model(&sort_menu)
         .build();
     header_bar.pack_start(&sort_type_btn);
+
+    // New (create) Menu
+    let new_menu = gio::Menu::new();
+    new_menu.append(Some("New Folder"), Some("app.new-folder"));
+    new_menu.append(Some("New Empty File"), Some("app.new-file"));
+
+    let new_btn_content = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    new_btn_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
+    let new_btn_label = gtk::Label::new(Some("New"));
+    new_btn_label.add_css_class("adaptive-label");
+    new_btn_content.append(&new_btn_label);
+
+    let new_type_btn = gtk::MenuButton::builder()
+        .child(&new_btn_content)
+        .tooltip_text("Create New")
+        .menu_model(&new_menu)
+        .build();
+    header_bar.pack_start(&new_type_btn);
 
     // Zoom Controls
     let zoom_group = Box::builder()
