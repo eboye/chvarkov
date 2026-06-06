@@ -37,6 +37,26 @@ pub fn dedupe_file_name(file_name: &str, exists: impl Fn(&str) -> bool) -> Strin
     }
 }
 
+/// Return a name for a brand-new item that does not collide, per `exists`.
+/// Uses an "untitled" numbering scheme ("base", "base 2", "base 3", ...),
+/// distinct from the " (copy)" scheme used for duplicates. The number is
+/// inserted before `ext` (pass "" for no extension).
+#[allow(dead_code)]
+pub fn untitled_name(base: &str, ext: &str, exists: impl Fn(&str) -> bool) -> String {
+    let first = format!("{base}{ext}");
+    if !exists(&first) {
+        return first;
+    }
+    let mut n = 2;
+    loop {
+        let cand = format!("{base} {n}{ext}");
+        if !exists(&cand) {
+            return cand;
+        }
+        n += 1;
+    }
+}
+
 /// Compute a non-colliding destination path inside `dir` for `file_name`.
 pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
     let name = dedupe_file_name(file_name, |n| dir.join(n).exists());
@@ -583,6 +603,27 @@ mod tests {
         assert_eq!(split_name("noext"), ("noext".to_string(), String::new()));
         assert_eq!(split_name(".bashrc"), (".bashrc".to_string(), String::new()));
         assert_eq!(split_name("a.tar.gz"), ("a.tar".to_string(), ".gz".to_string()));
+    }
+
+    #[test]
+    fn untitled_no_collision_returns_base() {
+        assert_eq!(untitled_name("untitled folder", "", |_| false), "untitled folder");
+    }
+
+    #[test]
+    fn untitled_first_collision_appends_2() {
+        assert_eq!(untitled_name("untitled folder", "", |n| n == "untitled folder"), "untitled folder 2");
+    }
+
+    #[test]
+    fn untitled_second_collision_appends_3() {
+        let taken = |n: &str| n == "untitled folder" || n == "untitled folder 2";
+        assert_eq!(untitled_name("untitled folder", "", taken), "untitled folder 3");
+    }
+
+    #[test]
+    fn untitled_inserts_number_before_extension() {
+        assert_eq!(untitled_name("report", ".txt", |n| n == "report.txt"), "report 2.txt");
     }
 
     #[test]
