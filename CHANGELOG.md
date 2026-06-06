@@ -1,0 +1,37 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0] - 2026-06-06
+
+### Added
+- **Cut / Copy / Paste** with **system-clipboard interop** — copy in chvarkov and paste in Finder / GNOME Files, and vice-versa.
+- **Move to… / Copy to…** via a folder picker.
+- **Create Link** (symlink) and **Compress to Zip**.
+- **Move to Trash** and **Delete Permanently** (with a confirmation prompt), all operating on the full multi-selection.
+- **Open in Terminal**, **Copy Path / Copy URI / Copy Name**.
+- **Email** attachments and **Share** — native macOS Share sheet (`NSSharingServicePicker`); `xdg-email` on Linux.
+- **Permission-aware context menus** — actions you don't have rights to perform are hidden, based on the filesystem's reported capabilities.
+- **Name-collision handling** — Replace / Skip / Keep Both, with directory **Merge** instead of destructive overwrite and an "apply to all" option for batches.
+- **Data-loss safety guards** (modeled on GNOME Nautilus) — refuses to copy/move a folder into itself, never silently replaces a directory, preserves symlinks instead of dereferencing them, and validates rename input.
+- **Linux:** opens a folder passed on the command line, so chvarkov works as an `xdg-open` / default file-manager target.
+- Headless unit-test suite covering the file-operation, clipboard, capability, and formatting logic.
+
+### Fixed
+- Smooth Miller-column and preview-pane resizing — the dragged edge no longer jumps left/right.
+- List view: operations now target the correct file for items in expanded subfolders (previously resolved to the wrong path).
+- Quick Look preview: Down-arrow no longer selects past the last item.
+- Hardened a panic path when opening Preferences with no active window.
+- Sidebar "Trash" now points to the correct location per platform (`~/.Trash` on macOS).
+- Prevented AppleScript injection when emailing files with unusual names (macOS).
+- Permanent delete now removes non-empty directories recursively.
+- Cleaned up GTK CSS parser warnings from the inline stylesheet.
+
+### Changed
+- Removed debug logging; the build is free of compiler and Clippy warnings.
+- Consolidated project guidance into `CLAUDE.md`.
+
+[0.2.0]: https://github.com/eboye/chvarkov/releases/tag/v0.2.0
