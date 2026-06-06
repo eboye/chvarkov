@@ -232,7 +232,7 @@ impl ListView {
             if selection.is_empty() { return glib::Propagation::Proceed; }
 
             let first_idx = selection.minimum();
-            let model = sel_model_shortcuts.model().unwrap();
+            let Some(model) = sel_model_shortcuts.model() else { return glib::Propagation::Proceed; };
             let item = model.item(first_idx);
 
             // Handle Tree expansion
