@@ -2,6 +2,7 @@ mod clipboard;
 mod column;
 mod file_ops;
 mod preview;
+mod quicklook;
 mod sidebar;
 mod icon_view;
 mod list_view;
