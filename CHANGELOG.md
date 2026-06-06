@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `Space` now opens the **OS-native previewer** when available — macOS QuickLook (`qlmanage`) or GNOME Sushi on Linux — and falls back to the built-in GTK preview window otherwise.
+
+### Changed
+- The docked preview pane now renders file **contents** (e.g. syntax-highlighted text), matching the `Space` view, instead of showing only an icon for text files.
+
 ## [0.4.1] - 2026-06-06
 
 ### Fixed

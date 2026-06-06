@@ -2,6 +2,7 @@ mod clipboard;
 mod column;
 mod file_ops;
 mod preview;
+mod quicklook;
 mod sidebar;
 mod icon_view;
 mod list_view;
@@ -695,6 +696,11 @@ fn setup_actions(app: &Application) {
             ACTIVE_MANAGER.with(|m| {
                 if let Some(manager) = m.borrow().as_ref()
                     && let Some(window) = app.windows().into_iter().find_map(|w| w.downcast::<ApplicationWindow>().ok()) {
+                        // Prefer the OS-native previewer; fall back to our GTK window.
+                        if let Some(path) = manager.current_selection_path()
+                            && quicklook::open_native_preview(&path) {
+                                return;
+                            }
                         manager.toggle_preview(&window);
                     }
             });
@@ -1642,6 +1648,11 @@ impl ColumnManager {
         if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
             overlay.add_toast(Toast::new(message));
         }
+    }
+
+    /// Path of the current single selection, if any.
+    fn current_selection_path(&self) -> Option<PathBuf> {
+        self.current_selection.borrow().as_ref().map(|s| s.path.clone())
     }
 
     /// The directory currently shown by the focused column/view (paste target).
