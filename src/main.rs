@@ -113,6 +113,8 @@ fn setup_styles() {
         .navigation-sidebar {
             background-color: @window_bg_color;
             border-right: 1px solid alpha(@borders, 0.3);
+            margin: 0;
+            padding: 0;
         }
 
         /* Absolute Alignment Scrub */
