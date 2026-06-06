@@ -1678,9 +1678,6 @@ impl ColumnManager {
         }
     }
 
-    /// Called after a file is trashed or permanently deleted.
-    /// Clears the current selection and collapses any child columns that were
-    /// opened from the deleted path, keeping only the parent column focused.
     /// Called once after a batch trash/delete. Clears the focused view's selection
     /// (so deleted rows don't stay highlighted) and collapses any columns deeper
     /// than the shallowest affected parent. The monitored DirectoryList refreshes
