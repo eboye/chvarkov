@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-06-06
+
+### Fixed
+- Sidebar header now lines up with the main header bar. The OverlaySplitView insets the sidebar pane vertically; the titlebars are the same height but the sidebar one sat a few pixels lower — its position is now measured at runtime and corrected.
+- Sidebar "Preferences" footer now aligns with the breadcrumb bar. GTK's built-in `.navigation-sidebar` padding was insetting the sidebar pane, leaving the footer ending a few pixels above the window bottom while the breadcrumb sat flush; the padding is now zeroed so both bars share the same top and bottom edges.
+
+[0.2.2]: https://github.com/eboye/chvarkov/releases/tag/v0.2.2
+
 ## [0.2.1] - 2026-06-06
 
 ### Fixed
