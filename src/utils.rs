@@ -29,13 +29,7 @@ pub fn attach_context_menu_key_controller(widget: &impl gtk::prelude::IsA<gtk::W
         if !is_menu_key {
             return glib::Propagation::Proceed;
         }
-        let menu = create_context_menu();
-        let popover = gtk::PopoverMenu::from_model(Some(&menu));
-        popover.set_parent(&widget_clone);
-        let w = widget_clone.width();
-        let h = widget_clone.height();
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(w / 2, h / 2, 1, 1)));
-        popover.popup();
+        open_context_menu_at_center(&widget_clone);
         glib::Propagation::Stop
     });
     widget.add_controller(key_controller);

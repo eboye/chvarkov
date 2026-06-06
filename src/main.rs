@@ -99,11 +99,9 @@ fn setup_styles() {
             background: none;
             background-color: @window_bg_color;
             border-bottom: 1px solid alpha(@borders, 0.3);
-            box-sizing: border-box;
-            padding: 0 !important;
-            margin: 0 !important;
+            padding: 0;
+            margin: 0;
             min-height: 46px;
-            max-height: 46px;
         }
 
         .sidebar-title-label {
@@ -117,11 +115,9 @@ fn setup_styles() {
         .sidebar-footer-area, .breadcrumb-container-scrolled {
             background-color: @window_bg_color;
             border-top: 1px solid alpha(@borders, 0.3);
-            box-sizing: border-box;
-            padding: 0 !important;
-            margin: 0 !important;
+            padding: 0;
+            margin: 0;
             min-height: 40px;
-            max-height: 40px;
         }
 
         .sidebar-footer-label {
@@ -143,8 +139,8 @@ fn setup_styles() {
 
         .breadcrumb-bar {
             background-color: @window_bg_color;
-            margin: 0 !important;
-            padding: 0 !important;
+            margin: 0;
+            padding: 0;
         }
 
         .breadcrumb-bar button {
