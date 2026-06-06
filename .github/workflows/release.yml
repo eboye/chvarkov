@@ -60,7 +60,7 @@ jobs:
             net.nocopypaste.chvarkov.svg \
             net.nocopypaste.chvarkov.metainfo.xml
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: binary-tarball
           path: chvarkov-linux-amd64.tar.gz
@@ -156,7 +156,7 @@ jobs:
             /usr/local/bin/appimagetool --appimage-extract-and-run AppDir chvarkov-linux-amd64.AppImage
             chmod -R 777 chvarkov-linux-amd64.AppImage
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: appimage
           path: chvarkov-linux-amd64.AppImage
@@ -178,7 +178,7 @@ jobs:
           manifest-path: net.nocopypaste.chvarkov.yml
           cache-key: flatpak-builder-${{ github.sha }}
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: flatpak-bundle
           path: chvarkov-linux-amd64.flatpak
@@ -206,7 +206,7 @@ jobs:
       - name: Compress .app bundle
         run: zip -r Chvarkov-macos-aarch64.zip Chvarkov.app
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-app
           path: Chvarkov-macos-aarch64.zip
