@@ -278,7 +278,7 @@ with:
 
 - [ ] **Step 3: Build + test**
 
-Run: `cargo build 2>&1 | tail -5 && cargo test 2>cargo test --lib 2>&1 | tail -31 | grep "test result"`
+Run: `cargo build 2>&1 | tail -5 && cargo test 2>&1 | grep "test result"`
 Expected: `Finished` with no errors; all tests pass.
 
 - [ ] **Step 4: Clippy**
