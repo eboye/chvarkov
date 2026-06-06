@@ -225,13 +225,11 @@ fn setup_actions(app: &Application) {
 
     let open_action = gio::SimpleAction::new("open", None);
     open_action.connect_activate(|_, _| {
-       println!("Open action triggered");
        ACTIVE_MANAGER.with(|m| {
            if let Some(manager) = m.borrow().as_ref() {
                if let Some(selection) = manager.current_selection.borrow().as_ref() {
                    let file_info = &selection.file_info;
                    let path = &selection.path;
-                   println!("Attempting to open: {:?}", path);
                     let is_dir = file_info.file_type() == gio::FileType::Directory || path.is_dir();
 
                     if is_dir {
@@ -256,26 +254,26 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.open", &["Return"]);
 
     let cut_action = gio::SimpleAction::new("cut", None);
-    cut_action.connect_activate(|_, _| println!("Cut action triggered"));
+    cut_action.connect_activate(|_, _| {});
     app.add_action(&cut_action);
     app.set_accels_for_action("app.cut", &["<Control>x"]);
 
     let copy_action = gio::SimpleAction::new("copy", None);
-    copy_action.connect_activate(|_, _| println!("Copy action triggered"));
+    copy_action.connect_activate(|_, _| {});
     app.add_action(&copy_action);
     app.set_accels_for_action("app.copy", &["<Control>c"]);
 
     let paste_action = gio::SimpleAction::new("paste", None);
-    paste_action.connect_activate(|_, _| println!("Paste action triggered"));
+    paste_action.connect_activate(|_, _| {});
     app.add_action(&paste_action);
     app.set_accels_for_action("app.paste", &["<Control>v"]);
 
     let move_to_action = gio::SimpleAction::new("move-to", None);
-    move_to_action.connect_activate(|_, _| println!("Move to action triggered"));
+    move_to_action.connect_activate(|_, _| {});
     app.add_action(&move_to_action);
 
     let copy_to_action = gio::SimpleAction::new("copy-to", None);
-    copy_to_action.connect_activate(|_, _| println!("Copy to action triggered"));
+    copy_to_action.connect_activate(|_, _| {});
     app.add_action(&copy_to_action);
 
     let rename_action = gio::SimpleAction::new("rename", None);
@@ -297,25 +295,28 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.rename", &["F2"]);
 
     let create_link_action = gio::SimpleAction::new("create-link", None);
-    create_link_action.connect_activate(|_, _| println!("Create link action triggered"));
+    create_link_action.connect_activate(|_, _| {});
     app.add_action(&create_link_action);
     app.set_accels_for_action("app.create-link", &["<Shift><Control>m"]);
 
     let compress_action = gio::SimpleAction::new("compress", None);
-    compress_action.connect_activate(|_, _| println!("Compress action triggered"));
+    compress_action.connect_activate(|_, _| {});
     app.add_action(&compress_action);
 
     let email_action = gio::SimpleAction::new("email", None);
-    email_action.connect_activate(|_, _| println!("Email action triggered"));
+    email_action.connect_activate(|_, _| {});
     app.add_action(&email_action);
 
     let delete_action = gio::SimpleAction::new("delete", None);
     delete_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                if let Some(selection) = manager.current_selection.borrow().as_ref() {
-                    trash_file(manager.clone(), selection.path.clone());
-                }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.trash { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::trash(manager.clone(), paths);
             }
         });
     });
@@ -326,9 +327,12 @@ fn setup_actions(app: &Application) {
     permanent_delete_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                if let Some(selection) = manager.current_selection.borrow().as_ref() {
-                    permanent_delete_file(manager.clone(), selection.path.clone());
-                }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.delete { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::delete(manager.clone(), paths);
             }
         });
     });
@@ -336,23 +340,23 @@ fn setup_actions(app: &Application) {
     app.set_accels_for_action("app.permanent-delete", &["<Shift>Delete"]);
 
     let open_terminal_action = gio::SimpleAction::new("open-terminal", None);
-    open_terminal_action.connect_activate(|_, _| println!("Open in Terminal triggered"));
+    open_terminal_action.connect_activate(|_, _| {});
     app.add_action(&open_terminal_action);
 
     let copy_path_action = gio::SimpleAction::new("copy-path", None);
-    copy_path_action.connect_activate(|_, _| println!("Copy Path triggered"));
+    copy_path_action.connect_activate(|_, _| {});
     app.add_action(&copy_path_action);
 
     let copy_uri_action = gio::SimpleAction::new("copy-uri", None);
-    copy_uri_action.connect_activate(|_, _| println!("Copy URI triggered"));
+    copy_uri_action.connect_activate(|_, _| {});
     app.add_action(&copy_uri_action);
 
     let copy_name_action = gio::SimpleAction::new("copy-name", None);
-    copy_name_action.connect_activate(|_, _| println!("Copy Name triggered"));
+    copy_name_action.connect_activate(|_, _| {});
     app.add_action(&copy_name_action);
 
     let sharing_options_action = gio::SimpleAction::new("sharing-options", None);
-    sharing_options_action.connect_activate(|_, _| println!("Sharing Options triggered"));
+    sharing_options_action.connect_activate(|_, _| {});
     app.add_action(&sharing_options_action);
 
     let properties_action = gio::SimpleAction::new("properties", None);
@@ -625,7 +629,7 @@ fn setup_actions(app: &Application) {
 }
 
 fn show_preferences_window(app: &Application) {
-    let window = app.active_window().unwrap();
+    let Some(window) = app.active_window() else { return; };
     let settings = gio::Settings::new("net.nocopypaste.chvarkov");
 
     let pref_window = adw::PreferencesDialog::builder()
@@ -1178,46 +1182,6 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
     dialog.present(Some(parent));
 }
 
-fn trash_file(manager: Rc<ColumnManager>, path: PathBuf) {
-    let file = gio::File::for_path(&path);
-    let manager_c = manager.clone();
-    file.trash_async(
-        glib::Priority::DEFAULT,
-        gio::Cancellable::NONE,
-        move |res| {
-            match res {
-                Ok(_) => {
-                    manager_c.send_toast("Moved to Trash");
-                    manager_c.on_file_deleted(&path);
-                },
-                Err(e) => {
-                    manager_c.send_toast(&format!("Error moving to trash: {}", e));
-                }
-            }
-        }
-    );
-}
-
-/// Permanently delete a file or directory (non-recoverable).
-fn permanent_delete_file(manager: Rc<ColumnManager>, path: PathBuf) {
-    let file = gio::File::for_path(&path);
-    let manager_c = manager.clone();
-    file.delete_async(
-        glib::Priority::DEFAULT,
-        gio::Cancellable::NONE,
-        move |res| {
-            match res {
-                Ok(_) => {
-                    manager_c.send_toast("Deleted permanently");
-                    manager_c.on_file_deleted(&path);
-                },
-                Err(e) => {
-                    manager_c.send_toast(&format!("Error deleting: {}", e));
-                }
-            }
-        }
-    );
-}
 
 #[derive(Clone)]
 struct SelectionInfo {
@@ -1270,16 +1234,23 @@ impl ColumnManager {
         }
     }
 
-    fn send_toast(&self, message: &str) {
+    pub(crate) fn send_toast(&self, message: &str) {
         if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
             overlay.add_toast(Toast::new(message));
+        }
+    }
+
+    /// Rebuild the UI from the current path (reuses the existing window).
+    pub(crate) fn refresh(&self) {
+        if let Some(app) = gio::Application::default() {
+            glib::idle_add_local(move || { app.activate(); glib::ControlFlow::Break });
         }
     }
 
     /// Called after a file is trashed or permanently deleted.
     /// Clears the current selection and collapses any child columns that were
     /// opened from the deleted path, keeping only the parent column focused.
-    fn on_file_deleted(&self, deleted_path: &PathBuf) {
+    pub(crate) fn on_file_deleted(&self, deleted_path: &PathBuf) {
         *self.current_selection.borrow_mut() = None;
 
         let parent = deleted_path.parent().map(|p| p.to_path_buf());
@@ -1412,7 +1383,7 @@ impl ColumnManager {
                                  let current = selection.minimum();
                                  if key == gtk::gdk::Key::Up && current > 0 {
                                      sm.select_item(current - 1, true);
-                                 } else if key == gtk::gdk::Key::Down {
+                                 } else if key == gtk::gdk::Key::Down && current + 1 < sm.n_items() {
                                      sm.select_item(current + 1, true);
                                  }
                             }
@@ -1601,7 +1572,6 @@ impl ColumnManager {
     fn handle_selection_change_multi(&self, selection_model: &gtk::MultiSelection, base_path: &PathBuf, index: usize) {
         let selection = selection_model.selection();
         if selection.is_empty() {
-            println!("Selection cleared in Column {}", index);
             *self.current_selection.borrow_mut() = None;
             self.update_breadcrumbs(base_path);
 
@@ -1629,9 +1599,6 @@ impl ColumnManager {
             };
 
             let new_path = file_info_path(&file_info, base_path);
-
-            println!("Selection [Column {}]: {:?} | Type: {:?} | FS is_dir: {}",
-                     index, new_path, file_info.file_type(), new_path.is_dir());
 
             *self.current_selection.borrow_mut() = Some(SelectionInfo {
                 file_info: file_info.clone(),
