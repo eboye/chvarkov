@@ -119,10 +119,21 @@ fn setup_styles() {
         .sidebar-title-area, headerbar, .headerbar {
             background: none;
             background-color: @window_bg_color;
+            /* We force the header background to the window color, so pair it with
+               the window foreground — otherwise symbolic icons keep the default
+               header fg and can render wrong (e.g. white in light theme). */
+            color: @window_fg_color;
             border-bottom: 1px solid alpha(@borders, 0.3);
             padding: 0;
             margin: 0;
             min-height: 46px;
+        }
+
+        /* Ensure header symbolic icons follow the (window) foreground color. */
+        headerbar image,
+        .headerbar image,
+        .sidebar-title-area image {
+            color: @window_fg_color;
         }
 
         .sidebar-title-label {
@@ -1000,7 +1011,7 @@ fn build_ui(app: &Application) {
     let view_icon = match view_type.as_str() {
         "icons" => "view-grid-symbolic",
         "list" => "view-list-symbolic",
-        _ => "view-column-symbolic",
+        _ => "view-columns-symbolic",
     };
 
     let view_label_text = match view_type.as_str() {
@@ -1566,13 +1577,16 @@ impl ColumnManager {
 
     fn create_preview_window(&self, parent: &ApplicationWindow, selection: &SelectionInfo) -> adw::Window {
         let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+        // Wrap in a toolbar view + header bar so the window has a visible close button.
+        let toolbar_view = adw::ToolbarView::builder().content(&preview_layout).build();
+        toolbar_view.add_top_bar(&adw::HeaderBar::new());
 
         let window = adw::Window::builder()
             .transient_for(parent)
             .default_width(800)
             .default_height(600)
             .modal(true)
-            .content(&preview_layout)
+            .content(&toolbar_view)
             .build();
 
         let manager_clone = self.clone();
@@ -1615,14 +1629,36 @@ impl ColumnManager {
     }
 
     fn get_focused_list_view(&self) -> Option<gtk::Widget> {
-        // 1. Check Miller Columns
+        // PRIMARY: use the real keyboard focus. The `focused-column` CSS class is
+        // only maintained by arrow-key navigation, so relying on it alone makes
+        // mouse-driven selection target the wrong column — a data-loss hazard for
+        // destructive actions (e.g. deleting a file could hit its parent folder).
+        // The widget that actually contains the focus is the source of truth.
+        let root = self
+            .columns_box
+            .root()
+            .or_else(|| self.main_view.borrow().as_ref().and_then(|m| m.root()));
+        if let Some(focus) = root.and_then(|r| r.focus()) {
+            let entries = self.entries.borrow();
+            for entry in entries.iter() {
+                if focus == entry.focus_target || focus.is_ancestor(&entry.focus_target) {
+                    return Some(entry.focus_target.clone());
+                }
+            }
+            if let Some(main) = self.main_view.borrow().as_ref()
+                && (focus == *main || focus.is_ancestor(main)) {
+                    return Some(main.clone());
+                }
+        }
+
+        // FALLBACK (no live focus, e.g. just after a rebuild): the CSS class set
+        // by keyboard navigation.
         let entries = self.entries.borrow();
         for entry in entries.iter() {
             if entry.focus_target.has_css_class("focused-column") {
                 return Some(entry.focus_target.clone());
             }
         }
-        // 2. Check active Icon/List view
         if let Some(main) = self.main_view.borrow().as_ref()
             && (main.has_css_class("focused-grid") || main.has_css_class("focused-list")) {
                 return Some(main.clone());
@@ -1676,7 +1712,9 @@ impl ColumnManager {
         if let Some(window) = self.preview_window.borrow().as_ref()
             && let Some(selection) = self.current_selection.borrow().as_ref() {
                 let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-                window.set_content(Some(&preview_layout));
+                let toolbar_view = adw::ToolbarView::builder().content(&preview_layout).build();
+                toolbar_view.add_top_bar(&adw::HeaderBar::new());
+                window.set_content(Some(&toolbar_view));
             }
     }
 
