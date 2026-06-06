@@ -40,6 +40,16 @@ permission-aware context menu (Task 1B) hides the same items. `Caps` /
 | Copy Path / URI / Name, Open in Terminal, Properties, Open | non-empty (no gate) |
 | Paste | clipboard non-empty; engine toasts destination errors |
 
+## Testing requirement (all tasks)
+
+Every task that adds pure or headless-GObject logic MUST add `#[cfg(test)]`
+unit tests in the same module, and end with `cargo test` green. Headless means:
+no `gtk::init`, no display, no GTK main loop. `gio::FileInfo` / `gio::File`
+objects may be constructed directly in tests. Do NOT write tests that require a
+display, the GDK clipboard, file dialogs, or spawning external programs — those
+are covered by the manual verification steps. Task 3B backfills tests for code
+already merged (Tasks 1–3).
+
 ---
 
 ## Task 1: Selection collection + nested-path fix
@@ -748,6 +758,146 @@ Run: `cargo run --release`. Select multiple files (Ctrl+click), press Delete →
 ```bash
 git add src/file_ops.rs src/main.rs src/sidebar.rs
 git commit -m "feat: multi-item trash/delete via engine; fix preview bound, prefs unwrap, trash path; drop debug logs"
+```
+
+---
+
+## Task 3B: Backfill unit tests for merged logic (Tasks 1–3)
+
+**Files:**
+- Modify: `src/file_ops.rs` (extend `mod tests`)
+- Modify: `src/utils.rs` (extend `mod tests`)
+- Modify: `src/preview.rs` (add `mod tests`)
+- Modify: `src/main.rs` (add `mod tests`)
+
+All tests are headless (no display). `cargo test` must pass.
+
+- [ ] **Step 1: file_ops — split_name, is_cross_device, unique_destination**
+
+In `src/file_ops.rs`, add these tests inside the existing `#[cfg(test)] mod tests`:
+
+```rust
+    #[test]
+    fn split_name_cases() {
+        assert_eq!(split_name("a.txt"), ("a".to_string(), ".txt".to_string()));
+        assert_eq!(split_name("noext"), ("noext".to_string(), String::new()));
+        assert_eq!(split_name(".bashrc"), (".bashrc".to_string(), String::new()));
+        assert_eq!(split_name("a.tar.gz"), ("a.tar".to_string(), ".gz".to_string()));
+    }
+
+    #[test]
+    fn is_cross_device_detects_exdev() {
+        assert!(is_cross_device(&std::io::Error::from_raw_os_error(18)));
+        assert!(!is_cross_device(&std::io::Error::from(std::io::ErrorKind::NotFound)));
+    }
+
+    #[test]
+    fn unique_destination_avoids_collisions() {
+        let tmp = std::env::temp_dir().join(format!("chv_ud_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x.txt"));
+        std::fs::write(tmp.join("x.txt"), b"").unwrap();
+        assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x (copy).txt"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+```
+
+- [ ] **Step 2: utils — format_size, zoom sizes, caps_from_info**
+
+In `src/utils.rs`, add inside the existing `#[cfg(test)] mod tests`:
+
+```rust
+    #[test]
+    fn format_size_units() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
+    }
+
+    #[test]
+    fn zoom_size_tables() {
+        assert_eq!(get_list_icon_size(0), 16);
+        assert_eq!(get_list_icon_size(4), 64);
+        assert_eq!(get_list_icon_size(99), 96);
+        assert_eq!(get_grid_icon_size(0), 48);
+        assert_eq!(get_grid_icon_size(99), 128);
+        assert_eq!(get_font_size(0), 10);
+        assert_eq!(get_font_size(99), 18);
+    }
+
+    #[test]
+    fn caps_from_info_reads_and_defaults() {
+        let info = gio::FileInfo::new();
+        info.set_attribute_boolean("access::can-read", true);
+        info.set_attribute_boolean("access::can-delete", false);
+        let c = caps_from_info(&info);
+        assert!(c.read);
+        assert!(!c.delete);
+        // unset attribute defaults to permitted (true)
+        assert!(c.write);
+    }
+```
+
+- [ ] **Step 3: preview — format_permissions**
+
+In `src/preview.rs`, add at the end of the file:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::format_permissions;
+
+    #[test]
+    fn permissions_strings() {
+        assert_eq!(format_permissions(0o600), "Read and Write");
+        assert_eq!(format_permissions(0o400), "Read-only");
+        assert_eq!(format_permissions(0o200), "Write-only");
+        assert_eq!(format_permissions(0o000), "No access");
+        assert_eq!(format_permissions(0o700), "Read and Write (Executable)");
+        assert_eq!(format_permissions(0o100), "No access (Executable)");
+    }
+}
+```
+
+- [ ] **Step 4: main — file_info_path**
+
+In `src/main.rs`, add at the end of the file:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_info_path_uses_standard_file_attr() {
+        let f = gio::File::for_path("/tmp/some/nested/file.txt");
+        let info = gio::FileInfo::new();
+        info.set_attribute_object("standard::file", &f);
+        let p = file_info_path(&info, std::path::Path::new("/base"));
+        assert_eq!(p, std::path::PathBuf::from("/tmp/some/nested/file.txt"));
+    }
+
+    #[test]
+    fn file_info_path_falls_back_to_base_join_name() {
+        let info = gio::FileInfo::new();
+        info.set_name("leaf.txt");
+        let p = file_info_path(&info, std::path::Path::new("/base/dir"));
+        assert_eq!(p, std::path::PathBuf::from("/base/dir/leaf.txt"));
+    }
+}
+```
+
+- [ ] **Step 5: Run + commit**
+
+Run: `cargo test` — all tests pass (file_ops, utils, preview, main).
+Run: `cargo build` — 0 warnings.
+
+```bash
+git add src/file_ops.rs src/utils.rs src/preview.rs src/main.rs
+git commit -m "test: backfill unit tests for file_ops, utils, preview, and path resolution"
 ```
 
 ---

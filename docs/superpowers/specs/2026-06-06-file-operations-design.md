@@ -179,8 +179,18 @@ does not appear for a file the user cannot delete.
 
 ## Testing / verification
 
-No unit-test harness exists in this repo; verification is manual per the project
-checklist, exercised per phase:
+**Unit tests cover all logic that can run headless** (no display / GTK main loop):
+file-name dedup, `split_name`, recursive copy (temp-dir), `unique_destination`,
+cross-device detection, archive naming, `caps_from_info` / `combine_caps`,
+`format_permissions`, `format_size`, the zoom→size functions, and
+`file_info_path`. These live in `#[cfg(test)] mod tests` within each module and
+run via `cargo test`. `caps_from_info` and `file_info_path` build `gio::FileInfo`
+objects directly (GObject works without a display).
+
+**Not unit-tested** (require a display, GTK main loop, or external programs):
+GUI widget construction, the async transfer/conflict dialog flow, the GDK
+clipboard, file-chooser dialogs, terminal/email/share spawning. These remain
+manually verified per phase:
 - `cargo build` is warning-free after each phase.
 - Each action verified on the primary platform (macOS) with single and
   multi-selection, including a name-collision case for paste/move/copy.
