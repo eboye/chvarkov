@@ -186,6 +186,16 @@ fn get_selection_model(widget: &gtk::Widget) -> Option<gtk::MultiSelection> {
     None
 }
 
+/// Resolve a FileInfo's real path. Uses the `standard::file` attribute (always
+/// requested in our DirectoryLists), which is correct even for nested rows in
+/// the tree-based List view. Falls back to `base/name` if the attribute is absent.
+fn file_info_path(info: &gio::FileInfo, base: &std::path::Path) -> PathBuf {
+    info.attribute_object("standard::file")
+        .and_downcast::<gio::File>()
+        .and_then(|f| f.path())
+        .unwrap_or_else(|| base.join(info.name()))
+}
+
 fn setup_actions(app: &Application) {
     let settings = gio::Settings::new("net.nocopypaste.chvarkov");
 
@@ -1420,6 +1430,39 @@ impl ColumnManager {
         None
     }
 
+    /// Gather every selected item in the currently focused view as SelectionInfo.
+    /// Empty if nothing is focused/selected. Paths resolve via `standard::file`,
+    /// so nested List-view rows are correct.
+    #[allow(dead_code)]
+    fn collect_selection(&self) -> Vec<SelectionInfo> {
+        let Some(view) = self.get_focused_list_view() else { return Vec::new() };
+        let Some(sm) = get_selection_model(&view) else { return Vec::new() };
+        let base = self
+            .current_selection
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.path.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(glib::home_dir);
+
+        let selection = sm.selection();
+        let Some(model) = sm.model() else { return Vec::new() };
+        let mut out = Vec::new();
+        for i in 0..selection.size() {
+            let pos = selection.nth(i as u32);
+            let Some(item) = model.item(pos) else { continue };
+            let info = if let Ok(tree_row) = item.clone().downcast::<gtk::TreeListRow>() {
+                tree_row.item().and_downcast::<gio::FileInfo>()
+            } else {
+                item.downcast::<gio::FileInfo>().ok()
+            };
+            if let Some(info) = info {
+                let path = file_info_path(&info, &base);
+                out.push(SelectionInfo { file_info: info, path });
+            }
+        }
+        out
+    }
+
     fn update_preview_if_open(&self) {
         if let Some(window) = self.preview_window.borrow().as_ref() {
             if let Some(selection) = self.current_selection.borrow().as_ref() {
@@ -1562,9 +1605,7 @@ impl ColumnManager {
                 item.downcast_ref::<gio::FileInfo>().unwrap().clone()
             };
 
-            let name = file_info.name();
-            let mut new_path = base_path.clone();
-            new_path.push(&name);
+            let new_path = file_info_path(&file_info, base_path);
 
             println!("Selection [Column {}]: {:?} | Type: {:?} | FS is_dir: {}",
                      index, new_path, file_info.file_type(), new_path.is_dir());
