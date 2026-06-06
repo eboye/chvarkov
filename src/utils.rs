@@ -382,7 +382,6 @@ pub fn is_content_type_a(ct: &str, category: &str) -> bool {
 /// Whether the docked preview pane should be shown for the current selection.
 /// True only for a single selected file (not a folder, not a multi-selection,
 /// not an empty selection).
-#[allow(dead_code)] // will be called in Task 2 (docked preview integration)
 pub fn should_dock_preview(selection_count: usize, is_dir: bool) -> bool {
     selection_count == 1 && !is_dir
 }
