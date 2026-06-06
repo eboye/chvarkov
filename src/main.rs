@@ -1566,13 +1566,16 @@ impl ColumnManager {
 
     fn create_preview_window(&self, parent: &ApplicationWindow, selection: &SelectionInfo) -> adw::Window {
         let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
+        // Wrap in a toolbar view + header bar so the window has a visible close button.
+        let toolbar_view = adw::ToolbarView::builder().content(&preview_layout).build();
+        toolbar_view.add_top_bar(&adw::HeaderBar::new());
 
         let window = adw::Window::builder()
             .transient_for(parent)
             .default_width(800)
             .default_height(600)
             .modal(true)
-            .content(&preview_layout)
+            .content(&toolbar_view)
             .build();
 
         let manager_clone = self.clone();
@@ -1676,7 +1679,9 @@ impl ColumnManager {
         if let Some(window) = self.preview_window.borrow().as_ref()
             && let Some(selection) = self.current_selection.borrow().as_ref() {
                 let preview_layout = Preview::create_preview_layout(&selection.file_info, &selection.path, true);
-                window.set_content(Some(&preview_layout));
+                let toolbar_view = adw::ToolbarView::builder().content(&preview_layout).build();
+                toolbar_view.add_top_bar(&adw::HeaderBar::new());
+                window.set_content(Some(&toolbar_view));
             }
     }
 
