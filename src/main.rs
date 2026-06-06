@@ -46,6 +46,7 @@ fn main() {
 
     let application = Application::builder()
         .application_id("net.nocopypaste.chvarkov")
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
     application.connect_startup(|app| {
@@ -53,6 +54,24 @@ fn main() {
         setup_styles();
     });
     application.connect_activate(build_ui);
+
+    // Handle being launched with a path argument — e.g. `xdg-open <dir>`, the
+    // "Open With" menu, or when chvarkov is the default file manager. Open the
+    // given directory (or the parent directory of a file), then build the UI.
+    application.connect_open(|app, files, _hint| {
+        if let Some(file) = files.first()
+            && let Some(path) = file.path()
+        {
+            let dir = if path.is_dir() {
+                path
+            } else {
+                path.parent().map(|p| p.to_path_buf()).unwrap_or(path)
+            };
+            let settings = gio::Settings::new("net.nocopypaste.chvarkov");
+            let _ = settings.set_string("current-path", &dir.to_string_lossy());
+        }
+        build_ui(app);
+    });
 
     application.run();
 }
