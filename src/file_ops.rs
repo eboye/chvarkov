@@ -72,7 +72,7 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// True if `path` equals `ancestor` or is nested under it. Inputs should be
 /// canonicalized by the caller.
 pub fn is_within(path: &Path, ancestor: &Path) -> bool {
-    path == ancestor || path.starts_with(ancestor)
+    path.starts_with(ancestor)
 }
 
 /// True if a rename failed because source and destination are on different filesystems.
@@ -349,9 +349,13 @@ mod tests {
         std::fs::create_dir_all(&dst).unwrap();
         std::fs::write(src.join("b.txt"), b"b").unwrap();
         std::fs::write(dst.join("a.txt"), b"a").unwrap();
+        // colliding file: present in both, different contents
+        std::fs::write(src.join("c.txt"), b"from-src").unwrap();
+        std::fs::write(dst.join("c.txt"), b"from-dst").unwrap();
         copy_recursive(&src, &dst).unwrap();
         assert!(dst.join("a.txt").exists(), "existing dest file preserved");
         assert!(dst.join("b.txt").exists(), "source file merged in");
+        assert_eq!(std::fs::read(dst.join("c.txt")).unwrap(), b"from-src", "colliding file overwritten with source content");
         std::fs::remove_dir_all(&tmp).ok();
     }
 
