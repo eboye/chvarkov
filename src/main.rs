@@ -1462,6 +1462,30 @@ fn build_ui(app: &Application) {
 
     content_row.append(&dock_container);
     main_content.append(&content_row);
+
+    // Non-modal copy/move progress bar (hidden until an operation runs).
+    let progress_label = gtk::Label::builder().halign(gtk::Align::Start).hexpand(true).ellipsize(gtk::pango::EllipsizeMode::Middle).build();
+    let progress_bar = gtk::ProgressBar::builder().hexpand(true).valign(gtk::Align::Center).build();
+    let cancel_btn = gtk::Button::builder().icon_name("process-stop-symbolic").tooltip_text("Cancel").has_frame(false).build();
+    let progress_box = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .margin_top(4).margin_bottom(4).margin_start(12).margin_end(12)
+        .build();
+    progress_box.append(&progress_label);
+    progress_box.append(&progress_bar);
+    progress_box.append(&cancel_btn);
+    progress_box.set_visible(false);
+    {
+        let manager_cancel = manager.clone();
+        cancel_btn.connect_clicked(move |_| {
+            if let Some(flag) = manager_cancel.cancel_flag.borrow().as_ref() {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+    }
+    manager.set_progress_widgets(progress_box.clone(), progress_bar, progress_label);
+    main_content.append(&progress_box);
     main_content.append(&breadcrumb_scrolled);
 
     toast_overlay.set_child(Some(&main_content));
@@ -1629,6 +1653,10 @@ struct ColumnManager {
     preview_window: Rc<RefCell<Option<adw::Window>>>,
     preview_dock: Rc<RefCell<Option<Box>>>,
     preview_dock_content: Rc<RefCell<Option<ScrolledWindow>>>,
+    progress_box: Rc<RefCell<Option<Box>>>,
+    progress_bar: Rc<RefCell<Option<gtk::ProgressBar>>>,
+    progress_label: Rc<RefCell<Option<gtk::Label>>>,
+    cancel_flag: Rc<RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>>,
     toast_overlay: Rc<RefCell<Option<ToastOverlay>>>,
     clipboard: Rc<RefCell<Option<clipboard::ClipboardOp>>>,
 }
@@ -1651,6 +1679,10 @@ impl ColumnManager {
             preview_window: Rc::new(RefCell::new(None)),
             preview_dock: Rc::new(RefCell::new(None)),
             preview_dock_content: Rc::new(RefCell::new(None)),
+            progress_box: Rc::new(RefCell::new(None)),
+            progress_bar: Rc::new(RefCell::new(None)),
+            progress_label: Rc::new(RefCell::new(None)),
+            cancel_flag: Rc::new(RefCell::new(None)),
             toast_overlay: Rc::new(RefCell::new(None)),
             clipboard: Rc::new(RefCell::new(None)),
         }
@@ -1992,6 +2024,38 @@ impl ColumnManager {
                 c = node.next_sibling();
             }
         }
+    }
+
+    fn set_progress_widgets(&self, container: Box, bar: gtk::ProgressBar, label: gtk::Label) {
+        *self.progress_box.borrow_mut() = Some(container);
+        *self.progress_bar.borrow_mut() = Some(bar);
+        *self.progress_label.borrow_mut() = Some(label);
+    }
+
+    /// Show the progress bar for a new operation and return its cancel flag.
+    // TODO: remove allow when wired in Task 3
+    #[allow(dead_code)]
+    fn show_progress(&self, initial_label: &str) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        *self.cancel_flag.borrow_mut() = Some(flag.clone());
+        if let Some(label) = self.progress_label.borrow().as_ref() { label.set_text(initial_label); }
+        if let Some(bar) = self.progress_bar.borrow().as_ref() { bar.set_fraction(0.0); }
+        if let Some(b) = self.progress_box.borrow().as_ref() { b.set_visible(true); }
+        flag
+    }
+
+    // TODO: remove allow when wired in Task 3
+    #[allow(dead_code)]
+    fn update_progress(&self, fraction: f64, label: &str) {
+        if let Some(bar) = self.progress_bar.borrow().as_ref() { bar.set_fraction(fraction.clamp(0.0, 1.0)); }
+        if let Some(l) = self.progress_label.borrow().as_ref() { l.set_text(label); }
+    }
+
+    // TODO: remove allow when wired in Task 3
+    #[allow(dead_code)]
+    fn hide_progress(&self) {
+        if let Some(b) = self.progress_box.borrow().as_ref() { b.set_visible(false); }
+        *self.cancel_flag.borrow_mut() = None;
     }
 
     /// Show the docked preview for the current single-file selection, or hide it.
