@@ -181,7 +181,7 @@ pub(crate) fn selection_caps() -> (usize, utils::Caps) {
             let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
             (sel.len(), caps)
         } else {
-            (0, utils::combine_caps(std::iter::empty()))
+            (0, utils::Caps::default())
         }
     })
 }

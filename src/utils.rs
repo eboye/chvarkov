@@ -2,7 +2,7 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 
 /// Filesystem capabilities for a selection, from GIO `access::*` attributes.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Caps {
     pub read: bool,
     pub write: bool,
@@ -30,7 +30,7 @@ pub fn caps_from_info(info: &gio::FileInfo) -> Caps {
 pub fn combine_caps(items: impl IntoIterator<Item = Caps>) -> Caps {
     let mut it = items.into_iter();
     match it.next() {
-        None => Caps { read: false, write: false, execute: false, delete: false, trash: false, rename: false },
+        None => Caps::default(),
         Some(first) => it.fold(first, |a, b| Caps {
             read: a.read && b.read,
             write: a.write && b.write,
@@ -109,6 +109,7 @@ pub fn create_context_menu() -> gio::Menu {
     build_context_menu(false)
 }
 
+/// Shift variant: "Delete Permanently" appears above "Move to Trash".
 pub fn create_context_menu_shift() -> gio::Menu {
     build_context_menu(true)
 }
@@ -126,9 +127,9 @@ fn build_context_menu(shift: bool) -> gio::Menu {
     }
 
     let s2 = gio::Menu::new();
-    if count >= 1 && caps.delete { s2.append(Some("Cut"), Some("app.cut")); }
+    if count >= 1 && caps.read && caps.delete { s2.append(Some("Cut"), Some("app.cut")); }
     if count >= 1 && caps.read { s2.append(Some("Copy"), Some("app.copy")); }
-    if count >= 1 && caps.delete { s2.append(Some("Move to..."), Some("app.move-to")); }
+    if count >= 1 && caps.read && caps.delete { s2.append(Some("Move to..."), Some("app.move-to")); }
     if count >= 1 && caps.read { s2.append(Some("Copy to..."), Some("app.copy-to")); }
     if s2.n_items() > 0 { menu.append_section(None, &s2); }
 
@@ -154,7 +155,11 @@ fn build_context_menu(shift: bool) -> gio::Menu {
         s4.append(Some("Copy Name"), Some("app.copy-name"));
     }
     #[cfg(target_os = "macos")]
-    if count >= 1 && caps.read { s4.append(Some("Sharing Options"), Some("app.sharing-options")); }
+    {
+        if count >= 1 && caps.read {
+            s4.append(Some("Sharing Options"), Some("app.sharing-options"));
+        }
+    }
     if s4.n_items() > 0 { menu.append_section(None, &s4); }
 
     if count == 1 {
