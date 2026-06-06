@@ -1142,6 +1142,413 @@ git commit -m "feat: implement Copy/Cut/Paste with system-clipboard interop and 
 
 ---
 
+## Task 4B: Engine safety guards (Nautilus-informed)
+
+Hardens the `transfer` engine against data-loss edge cases. All replacements are
+in `src/file_ops.rs`.
+
+**Files:**
+- Modify: `src/file_ops.rs` (replace `copy_recursive`, `transfer`, `ask_conflict`; add `is_within`; add tests)
+
+- [ ] **Step 1: Replace `copy_recursive` with a symlink-preserving, merge-friendly version**
+
+Replace the existing `pub fn copy_recursive` with:
+
+```rust
+/// Recursively copy `src` to `dst` (file, directory, or symlink). `dst` is the
+/// full target path. Symlinks are recreated (not dereferenced). Copying a
+/// directory onto an existing directory MERGES (existing files are kept; only
+/// colliding leaf files are overwritten).
+pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(src)?;
+    if meta.file_type().is_symlink() {
+        if let Some(parent) = dst.parent() { std::fs::create_dir_all(parent)?; }
+        let _ = std::fs::remove_file(dst);
+        std::os::unix::fs::symlink(std::fs::read_link(src)?, dst)?;
+        Ok(())
+    } else if meta.is_dir() {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        if let Some(parent) = dst.parent() { std::fs::create_dir_all(parent)?; }
+        std::fs::copy(src, dst)?;
+        Ok(())
+    }
+}
+```
+
+- [ ] **Step 2: Add the `is_within` guard helper**
+
+Add near `copy_recursive`:
+
+```rust
+/// True if `path` equals `ancestor` or is nested under it. Inputs should be
+/// canonicalized by the caller.
+pub fn is_within(path: &Path, ancestor: &Path) -> bool {
+    path == ancestor || path.starts_with(ancestor)
+}
+```
+
+- [ ] **Step 3: Replace `transfer` with the guarded version**
+
+Replace the entire `pub fn transfer` with:
+
+```rust
+pub fn transfer(
+    manager: Rc<ColumnManager>,
+    parent: gtk::Window,
+    sources: Vec<PathBuf>,
+    dest_dir: PathBuf,
+    kind: TransferKind,
+) {
+    glib::spawn_future_local(async move {
+        let mut apply_to_all: Option<&'static str> = None;
+        let mut done = 0usize;
+        let mut skipped = 0usize;
+        let mut failed = 0usize;
+
+        let dest_canon = dest_dir.canonicalize().ok();
+
+        for src in sources {
+            let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+            let src_canon = src.canonicalize().ok();
+
+            // Guard: don't place a directory inside itself or a descendant.
+            if src.is_dir() {
+                if let (Some(sc), Some(dc)) = (&src_canon, &dest_canon) {
+                    if is_within(dc, sc) {
+                        manager.send_toast(&format!("Can't place \u{201c}{name}\u{201d} inside itself"));
+                        failed += 1;
+                        continue;
+                    }
+                }
+            }
+
+            let mut target = dest_dir.join(&name);
+
+            // Guard: source and target resolve to the same path.
+            let same_path = match (&src_canon, target.canonicalize().ok()) {
+                (Some(a), Some(b)) => *a == b,
+                _ => false,
+            };
+            if same_path {
+                match kind {
+                    TransferKind::Copy => { target = unique_destination(&dest_dir, &name); } // duplicate in place
+                    TransferKind::Move => { skipped += 1; continue; }                        // no-op
+                }
+            }
+
+            // Conflict resolution.
+            let mut merge_dirs = false;
+            if target.exists() {
+                let target_is_symlink = target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
+                let both_dirs = src.is_dir() && target.is_dir() && !target_is_symlink;
+                let choice = match apply_to_all {
+                    Some(c) => c,
+                    None => {
+                        let (c, all) = ask_conflict(&parent, &name, both_dirs).await;
+                        if all { apply_to_all = Some(c); }
+                        c
+                    }
+                };
+                match choice {
+                    "skip" => { skipped += 1; continue; }
+                    "keep" => { target = unique_destination(&dest_dir, &name); }
+                    _ => {
+                        if both_dirs {
+                            merge_dirs = true; // copy_recursive merges; don't delete target
+                        } else {
+                            let t = target.clone();
+                            let removed = gio::spawn_blocking(move || {
+                                if t.is_dir() { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
+                            }).await;
+                            if !matches!(removed, Ok(Ok(()))) {
+                                manager.send_toast(&format!("Could not replace {name}"));
+                                failed += 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let src_c = src.clone();
+            let target_c = target.clone();
+            let res = gio::spawn_blocking(move || -> std::io::Result<()> {
+                match kind {
+                    TransferKind::Copy => copy_recursive(&src_c, &target_c),
+                    TransferKind::Move => {
+                        if merge_dirs || target_c.exists() {
+                            // Can't rename onto an existing target: copy then remove source.
+                            copy_recursive(&src_c, &target_c)?;
+                            if src_c.is_dir() { std::fs::remove_dir_all(&src_c) } else { std::fs::remove_file(&src_c) }
+                        } else {
+                            match std::fs::rename(&src_c, &target_c) {
+                                Ok(()) => Ok(()),
+                                Err(e) if is_cross_device(&e) => {
+                                    copy_recursive(&src_c, &target_c)?;
+                                    if src_c.is_dir() { std::fs::remove_dir_all(&src_c) } else { std::fs::remove_file(&src_c) }
+                                }
+                                Err(e) => Err(e),
+                            }
+                        }
+                    }
+                }
+            }).await;
+
+            match res {
+                Ok(Ok(())) => done += 1,
+                _ => { failed += 1; manager.send_toast(&format!("Failed to transfer {name}")); }
+            }
+        }
+
+        let verb = if kind == TransferKind::Move { "Moved" } else { "Copied" };
+        let mut extra = String::new();
+        if skipped > 0 { extra.push_str(&format!(", skipped {skipped}")); }
+        if failed > 0 { extra.push_str(&format!(", {failed} failed")); }
+        manager.send_toast(&format!("{verb} {done} item(s){extra}"));
+        manager.refresh();
+    });
+}
+```
+
+- [ ] **Step 4: Replace `ask_conflict` to support a Merge label**
+
+Replace the existing `async fn ask_conflict` with:
+
+```rust
+/// Show the collision dialog; returns (choice, apply_to_all).
+/// `merge` relabels the overwrite action "Merge" (directory-into-directory).
+async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool) -> (&'static str, bool) {
+    let dialog = adw::AlertDialog::builder()
+        .heading("Item already exists")
+        .body(format!("\u{201c}{name}\u{201d} already exists in the destination. What do you want to do?"))
+        .build();
+    dialog.add_response("skip", "Skip");
+    dialog.add_response("keep", "Keep Both");
+    dialog.add_response("replace", if merge { "Merge" } else { "Replace" });
+    if !merge {
+        dialog.set_response_appearance("replace", adw::ResponseAppearance::Destructive);
+    }
+    dialog.set_default_response(Some("keep"));
+    dialog.set_close_response("skip");
+
+    let check = gtk::CheckButton::with_label("Apply to all remaining");
+    check.set_margin_top(8);
+    check.set_margin_start(12);
+    check.set_margin_end(12);
+    dialog.set_extra_child(Some(&check));
+
+    let response = dialog.choose_future(Some(parent)).await;
+    let choice: &'static str = match response.as_str() {
+        "replace" => "replace",
+        "keep" => "keep",
+        _ => "skip",
+    };
+    (choice, check.is_active())
+}
+```
+
+- [ ] **Step 5: Add tests** (inside the existing `#[cfg(test)] mod tests` in `file_ops.rs`)
+
+```rust
+    #[test]
+    fn is_within_cases() {
+        use std::path::Path;
+        assert!(is_within(Path::new("/a/b"), Path::new("/a")));
+        assert!(is_within(Path::new("/a"), Path::new("/a")));
+        assert!(!is_within(Path::new("/a"), Path::new("/a/b")));
+        assert!(!is_within(Path::new("/x/y"), Path::new("/a")));
+    }
+
+    #[test]
+    fn copy_recursive_merges_into_existing_dir() {
+        let tmp = std::env::temp_dir().join(format!("chv_merge_{}", std::process::id()));
+        let src = tmp.join("src");
+        let dst = tmp.join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("b.txt"), b"b").unwrap();
+        std::fs::write(dst.join("a.txt"), b"a").unwrap();
+        copy_recursive(&src, &dst).unwrap();
+        assert!(dst.join("a.txt").exists(), "existing dest file preserved");
+        assert!(dst.join("b.txt").exists(), "source file merged in");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn copy_recursive_preserves_symlink() {
+        let tmp = std::env::temp_dir().join(format!("chv_link_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let real = tmp.join("real.txt");
+        std::fs::write(&real, b"hi").unwrap();
+        let link = tmp.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let dst = tmp.join("copied");
+        copy_recursive(&link, &dst).unwrap();
+        assert!(dst.symlink_metadata().unwrap().file_type().is_symlink());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+```
+
+- [ ] **Step 6: Build + test + commit**
+
+Run: `cargo build` (0 warnings) and `cargo test file_ops` (all pass, incl. the 3 new tests).
+
+```bash
+git add src/file_ops.rs
+git commit -m "feat: guard transfer against into-self, same-path, destructive dir-replace, and symlink deref"
+```
+
+---
+
+## Task 4C: Delete confirmation + filename validation
+
+**Files:**
+- Modify: `src/file_ops.rs` (`delete` gains a confirmation dialog; add `validate_filename` + tests)
+- Modify: `src/main.rs` (`permanent_delete_action` passes a window; `show_rename_dialog` validates)
+
+- [ ] **Step 1: Add `validate_filename` + tests to `file_ops.rs`**
+
+```rust
+/// Validate a name for rename/create. Returns Err(reason) if invalid.
+pub fn validate_filename(name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("Name cannot be empty".into());
+    }
+    if name.contains('/') {
+        return Err("Name cannot contain \u{201c}/\u{201d}".into());
+    }
+    if name == "." || name == ".." {
+        return Err("Name cannot be \u{201c}.\u{201d} or \u{201c}..\u{201d}".into());
+    }
+    if name.len() > 255 {
+        return Err("Name is too long".into());
+    }
+    Ok(())
+}
+```
+
+Tests (in the `mod tests` block):
+
+```rust
+    #[test]
+    fn validate_filename_rules() {
+        assert!(validate_filename("ok.txt").is_ok());
+        assert!(validate_filename("").is_err());
+        assert!(validate_filename("   ").is_err());
+        assert!(validate_filename("a/b").is_err());
+        assert!(validate_filename(".").is_err());
+        assert!(validate_filename("..").is_err());
+        assert!(validate_filename(&"x".repeat(256)).is_err());
+        assert!(validate_filename(".hidden").is_ok()); // leading dot allowed (warning only)
+    }
+```
+
+- [ ] **Step 2: Add a confirmation dialog to `delete`**
+
+Change the signature of `delete` to take a parent window and confirm before deleting. Replace the existing `pub fn delete(manager, paths)` with:
+
+```rust
+/// Permanently delete a batch of paths after a confirmation dialog.
+pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBuf>) {
+    if paths.is_empty() { return; }
+    glib::spawn_future_local(async move {
+        let n = paths.len();
+        let dialog = adw::AlertDialog::builder()
+            .heading("Delete permanently?")
+            .body(format!(
+                "{} will be permanently deleted. This cannot be undone.",
+                if n == 1 { "1 item".to_string() } else { format!("{n} items") }
+            ))
+            .build();
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("delete", "Delete");
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        if dialog.choose_future(Some(&parent)).await != "delete" {
+            return;
+        }
+
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for path in &paths {
+            let file = gio::File::for_path(path);
+            match file.delete_future(glib::Priority::DEFAULT).await {
+                Ok(_) => { done += 1; manager.on_file_deleted(path); }
+                Err(_) => failed += 1,
+            }
+        }
+        manager.send_toast(&format!(
+            "Deleted {done} item(s){}",
+            if failed > 0 { format!(", {failed} failed") } else { String::new() }
+        ));
+    });
+}
+```
+
+(`trash` is unchanged — trashing is reversible, so it stays unconfirmed.)
+
+- [ ] **Step 3: Update `permanent_delete_action` to pass a window**
+
+In `src/main.rs`, the `permanent_delete_action` closure must supply the active window. Add `let perm_del_app_weak = app.downgrade();` above it and make it `move`:
+
+```rust
+    let perm_del_app_weak = app.downgrade();
+    permanent_delete_action.connect_activate(move |_, _| {
+        let Some(app) = perm_del_app_weak.upgrade() else { return };
+        let Some(window) = app.active_window() else { return };
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.delete { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::delete(manager.clone(), window.clone().upcast(), paths);
+            }
+        });
+    });
+```
+
+- [ ] **Step 4: Validate the name in `show_rename_dialog`**
+
+In `src/main.rs`, inside `show_rename_dialog`'s `connect_response` handler, replace the guard:
+
+```rust
+            let new_name = entry.text().to_string();
+            if !new_name.is_empty() && new_name != old_name_c {
+```
+
+with a validation check (toast + bail on invalid):
+
+```rust
+            let new_name = entry.text().to_string();
+            if new_name != old_name_c {
+                if let Err(reason) = file_ops::validate_filename(&new_name) {
+                    manager_c.send_toast(&reason);
+                    return;
+                }
+```
+
+Keep the rest of the body (the `set_display_name_async` call) the same, and make sure the braces still balance (you are replacing the opening `if` condition and adding the validation block immediately inside it; the existing closing brace of the original `if` still applies).
+
+- [ ] **Step 5: Build + test + commit**
+
+Run: `cargo build` (0 warnings) and `cargo test` (all pass, incl. `validate_filename_rules`).
+
+```bash
+git add src/file_ops.rs src/main.rs
+git commit -m "feat: confirm permanent delete and validate rename input"
+```
+
+---
+
 ## Task 5: Move to… / Copy to…
 
 **Files:**

@@ -157,6 +157,29 @@ does not appear for a file the user cannot delete.
   attribute (Create Link, Compress output, Paste destination) rely on the engine
   surfacing a permission error as a toast, rather than predictive hiding.
 
+## Safety guards (Nautilus-informed)
+
+Modeled on GNOME Nautilus's `nautilus-file-operations.c` precondition checks,
+adapted to our gio + `std::fs` engine (all cross-platform on Linux + macOS):
+
+- **Copy/move into self or descendant:** before transferring a directory, reject
+  if the (canonicalized) destination is the source or lives inside it
+  (`is_within`), preventing infinite recursion.
+- **Same path source == target:** Copy into the same folder auto-duplicates
+  (`"x (copy)"`); Move into the same folder is a no-op (skipped). Prevents the
+  Move+"Replace" case that would delete the source.
+- **Directory merge, not destructive replace:** when both source and target are
+  directories, "Replace" becomes **Merge** — recurse without deleting the
+  destination first (so unique destination files survive). Non-directory
+  conflicts still remove-then-write.
+- **Symlink preservation:** `copy_recursive` recreates symlinks
+  (`read_link` + `symlink`) instead of dereferencing them.
+- **Permanent-delete confirmation:** `delete` shows a confirmation dialog with
+  the item count before deleting; trashing stays unconfirmed (reversible). Trash
+  failures report a clear summary.
+- **Filename validation (rename/create):** reject empty, `/`-containing, `.`/`..`,
+  and over-length (255 byte) names; leading-dot names get a non-blocking note.
+
 ## Bundled bug fixes (from the review)
 
 - **#3** Sidebar "Trash" path: use `~/.Trash` on macOS, `~/.local/share/Trash/files`
