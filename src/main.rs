@@ -1657,10 +1657,11 @@ impl ColumnManager {
 
     /// The directory currently shown by the focused column/view (paste target).
     pub(crate) fn focused_dir(&self) -> Option<PathBuf> {
-        let view = self.get_focused_list_view()?;
-        for entry in self.entries.borrow().iter() {
-            if entry.focus_target == view {
-                return Some(entry.path.clone());
+        if let Some(view) = self.get_focused_list_view() {
+            for entry in self.entries.borrow().iter() {
+                if entry.focus_target == view {
+                    return Some(entry.path.clone());
+                }
             }
         }
         if let Some(sel) = self.current_selection.borrow().as_ref()
@@ -1885,18 +1886,11 @@ impl ColumnManager {
                 }
         }
 
-        // FALLBACK (no live focus, e.g. just after a rebuild): the CSS class set
-        // by keyboard navigation.
-        let entries = self.entries.borrow();
-        for entry in entries.iter() {
-            if entry.focus_target.has_css_class("focused-column") {
-                return Some(entry.focus_target.clone());
-            }
-        }
-        if let Some(main) = self.main_view.borrow().as_ref()
-            && (main.has_css_class("focused-grid") || main.has_css_class("focused-list")) {
-                return Some(main.clone());
-            }
+        // No live keyboard focus: return None so destructive actions no-op rather
+        // than act on the wrong view. CSS classes (focused-column/grid/list) are
+        // styling only and are deliberately NOT consulted here (they are updated
+        // by arrow-key nav only and can be stale — that mismatch caused a
+        // delete-the-wrong-folder data-loss bug).
         None
     }
 
