@@ -1698,6 +1698,36 @@ impl ColumnManager {
         *self.breadcrumb_parent.borrow_mut() = Some(parent);
     }
 
+    /// Navigate to `path` within the Miller chain. If a column already shows that
+    /// path, scroll/focus it and KEEP the deeper columns (walk the history instead of
+    /// collapsing it). Otherwise (e.g. an ancestor above the root column), rebuild
+    /// from there.
+    fn navigate_to_column(&self, path: &std::path::Path) {
+        let target = self
+            .entries
+            .borrow()
+            .iter()
+            .find(|e| e.path == path)
+            .map(|e| e.focus_target.clone());
+
+        match target {
+            Some(focus_target) => {
+                for entry in self.entries.borrow().iter() {
+                    entry.focus_target.remove_css_class("focused-column");
+                }
+                focus_target.add_css_class("focused-column");
+                focus_target.grab_focus(); // scrolls the column into view
+            }
+            None => {
+                // Only a directory can open as a column (skip a selected file's own
+                // leaf breadcrumb).
+                if path.is_dir() {
+                    self.add_column(path.to_path_buf(), 0);
+                }
+            }
+        }
+    }
+
     fn update_breadcrumbs(&self, path: &std::path::Path) {
         if let Some(container) = self.breadcrumb_container.borrow().as_ref() {
             while let Some(child) = container.first_child() {
@@ -1745,7 +1775,8 @@ impl ColumnManager {
                             app.activate();
                         }
                     } else {
-                        manager_clone.add_column(path, 0);
+                        // Walk the existing Miller chain instead of collapsing it.
+                        manager_clone.navigate_to_column(&path);
                     }
                 });
                 container.append(&btn);
