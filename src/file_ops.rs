@@ -395,6 +395,40 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Attach the given files to a new email via the platform's mechanism.
+pub fn email(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
+    use std::process::Command;
+    if paths.is_empty() { return; }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut script = String::from("tell application \"Mail\"\nset m to make new outgoing message\ntell m\n");
+        for p in &paths {
+            script.push_str(&format!(
+                "make new attachment with properties {{file name:POSIX file \"{}\"}}\n",
+                p.to_string_lossy().replace('"', "\\\"")
+            ));
+        }
+        script.push_str("end tell\nset visible of m to true\nactivate\nend tell\n");
+        let ok = Command::new("osascript").arg("-e").arg(&script).spawn().is_ok();
+        if !ok { manager.send_toast("Could not open Mail"); }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut cmd = Command::new("xdg-email");
+        for p in &paths { cmd.arg("--attach").arg(p); }
+        if cmd.spawn().is_err() { manager.send_toast("xdg-email not available"); }
+    }
+}
+
+/// Share files. Delegates to email (the reliable cross-platform target); a
+/// native macOS NSSharingServicePicker could replace this if NSView anchoring
+/// from the GTK window is solved.
+pub fn share(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
+    email(manager, paths);
+}
+
 /// Create a symlink named "<name> link" beside each source (numbered on collision).
 pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     let mut made = 0usize;

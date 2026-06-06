@@ -427,7 +427,19 @@ fn setup_actions(app: &Application) {
     app.add_action(&compress_action);
 
     let email_action = gio::SimpleAction::new("email", None);
-    email_action.connect_activate(|_, _| {});
+    email_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().filter(|s| !s.path.is_dir()).map(|s| s.path).collect();
+                if paths.is_empty() { manager.send_toast("Select file(s) to email"); return; }
+                file_ops::email(manager.clone(), paths);
+            }
+        });
+    });
     app.add_action(&email_action);
 
     let delete_action = gio::SimpleAction::new("delete", None);
@@ -527,7 +539,18 @@ fn setup_actions(app: &Application) {
     app.add_action(&copy_name_action);
 
     let sharing_options_action = gio::SimpleAction::new("sharing-options", None);
-    sharing_options_action.connect_activate(|_, _| {});
+    sharing_options_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::share(manager.clone(), paths);
+            }
+        });
+    });
     app.add_action(&sharing_options_action);
 
     let properties_action = gio::SimpleAction::new("properties", None);
