@@ -334,6 +334,64 @@ pub fn open_terminal(manager: Rc<ColumnManager>, dir: PathBuf) {
     if !spawned { manager.send_toast("No terminal found"); }
 }
 
+/// Choose the archive file name for a selection.
+pub fn archive_name(paths: &[PathBuf]) -> String {
+    if paths.len() == 1 {
+        if let Some(name) = paths[0].file_name().and_then(|n| n.to_str()) {
+            return format!("{name}.zip");
+        }
+    }
+    "Archive.zip".to_string()
+}
+
+/// Zip the selected paths into a .zip in their parent directory.
+pub fn compress(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
+    let Some(first) = paths.first() else { return };
+    let Some(dir) = first.parent().map(|p| p.to_path_buf()) else { return };
+    let name = dedupe_file_name(&archive_name(&paths), |n| dir.join(n).exists());
+    let out = dir.join(name);
+
+    let manager_c = manager.clone();
+    glib::spawn_future_local(async move {
+        let paths_c = paths.clone();
+        let out_c = out.clone();
+        let res = gio::spawn_blocking(move || zip_paths(&paths_c, &out_c)).await;
+        match res {
+            Ok(Ok(())) => { manager_c.send_toast("Compressed"); manager_c.refresh(); }
+            _ => manager_c.send_toast("Compression failed"),
+        }
+    });
+}
+
+fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+    let file = std::fs::File::create(out)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    fn add(zip: &mut zip::ZipWriter<std::fs::File>, base: &Path, path: &Path, opts: zip::write::SimpleFileOptions) -> std::io::Result<()> {
+        let name = path.strip_prefix(base.parent().unwrap_or(base)).unwrap_or(path).to_string_lossy().to_string();
+        if path.is_dir() {
+            zip.add_directory(format!("{name}/"), opts).map_err(std::io::Error::from)?;
+            for entry in std::fs::read_dir(path)? {
+                add(zip, base, &entry?.path(), opts)?;
+            }
+        } else {
+            zip.start_file(name, opts).map_err(std::io::Error::from)?;
+            let data = std::fs::read(path)?;
+            zip.write_all(&data)?;
+        }
+        Ok(())
+    }
+
+    for p in paths {
+        add(&mut zip, p, p, opts)?;
+    }
+    zip.finish().map_err(std::io::Error::from)?;
+    Ok(())
+}
+
 /// Create a symlink named "<name> link" beside each source (numbered on collision).
 pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     let mut made = 0usize;
@@ -452,6 +510,12 @@ mod tests {
         assert!(validate_filename("..").is_err());
         assert!(validate_filename(&"x".repeat(256)).is_err());
         assert!(validate_filename(".hidden").is_ok()); // leading dot allowed (warning only)
+    }
+
+    #[test]
+    fn archive_name_single_and_multi() {
+        assert_eq!(archive_name(&[PathBuf::from("/a/b/photo.png")]), "photo.png.zip");
+        assert_eq!(archive_name(&[PathBuf::from("/a/x"), PathBuf::from("/a/y")]), "Archive.zip");
     }
 
     #[test]

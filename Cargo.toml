@@ -13,3 +13,4 @@ glib = "0.22.7"
 gtk4 = { version = "0.11.3", features = ["v4_10"] }
 libadwaita = { version = "0.9.1", features = ["v1_6"] }
 sourceview5 = "0.11.0"
+zip = { version = "2", default-features = false, features = ["deflate"] }
