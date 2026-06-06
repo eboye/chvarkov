@@ -41,6 +41,7 @@ name collisions**.
 | Compress format | `.zip` (cross-platform), via the `zip` crate on a worker thread |
 | Open in Terminal | macOS `open -a Terminal <dir>`; Linux `$TERMINAL` then a known list |
 | Create Link | Symlink `"<name> link"` in the same folder (numbered on collision) |
+| Permissions | Actions the user lacks rights for are **hidden** from the context menu and their shortcuts no-op, driven by GIO `access::*` attributes |
 
 ## Architecture
 
@@ -120,6 +121,42 @@ the closures.
 - **Sharing Options** — macOS native Share sheet (NSSharingServicePicker bridge);
   hidden/disabled on Linux.
 
+## Permission awareness
+
+Actions are gated by the user's actual filesystem rights so that, e.g., Delete
+does not appear for a file the user cannot delete.
+
+- **Source of truth:** GIO `access::*` boolean attributes, requested in every
+  `DirectoryList` query: `access::can-read`, `access::can-write`,
+  `access::can-execute`, `access::can-delete`, `access::can-trash`,
+  `access::can-rename`. GIO computes these accounting for parent-directory
+  permissions and ownership, cross-platform. If an attribute is absent it is
+  treated as permitted (true), to avoid hiding actions spuriously.
+- **A `Caps` struct** (`utils.rs`) reads these from a `FileInfo`. For a
+  multi-selection, capabilities are AND-combined: an action is offered only if
+  **every** selected item supports it (so a batch never partially fails on the
+  unsupported members). An empty selection yields no capabilities.
+- **Two surfaces are gated:**
+  1. The context menu is rebuilt per popup, omitting items the current selection
+     can't perform (hidden, not greyed — matches the requirement).
+  2. Each action handler re-checks the relevant capability, so the keyboard
+     shortcut also no-ops when not permitted (no toast spam).
+- **Per-action capability gate:**
+  | Action | Shown / allowed when |
+  | --- | --- |
+  | Open | ≥1 selected |
+  | Cut, Move to… | all selected `can-delete` |
+  | Copy, Copy to…, Compress, Email, Sharing | all selected `can-read` |
+  | Rename | exactly 1 selected and `can-rename` |
+  | Create Link | all selected `can-read` (parent-dir write enforced by the engine; toast on failure) |
+  | Move to Trash | all selected `can-trash` |
+  | Delete Permanently | all selected `can-delete` |
+  | Copy Path / URI / Name, Open in Terminal, Properties | ≥1 selected (read-only metadata) |
+  | Paste | keyboard-only; engine reports destination-permission errors via toast |
+- Operations that depend on parent-directory writability but have no direct file
+  attribute (Create Link, Compress output, Paste destination) rely on the engine
+  surfacing a permission error as a toast, rather than predictive hiding.
+
 ## Bundled bug fixes (from the review)
 
 - **#3** Sidebar "Trash" path: use `~/.Trash` on macOS, `~/.local/share/Trash/files`
@@ -154,6 +191,7 @@ checklist, exercised per phase:
 ## Phased build order
 
 1. `collect_selection` helper + nested-path fix.
+1b. Permission model (`Caps` + `access::*` attributes) + permission-aware menus.
 2. `file_ops` engine + conflict dialog.
 3. Switch Trash/Delete onto the engine (multi-item) + the four bundled bug fixes.
 4. `clipboard` module → Copy / Cut / Paste.

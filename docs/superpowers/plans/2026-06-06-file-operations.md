@@ -18,7 +18,27 @@
 - `src/clipboard.rs` (new) — system-clipboard read/write + internal cut/copy state type.
 - `src/main.rs` (modify) — add `mod file_ops; mod clipboard;`, a `ColumnManager::collect_selection`, a `ColumnManager::refresh`, the clipboard state field, and rewrite the 13 action closures; fold in bug fixes.
 - `src/sidebar.rs` (modify) — platform-correct Trash path.
+- `src/utils.rs` (modify) — add `access::*` attributes to `get_directory_list`; add `Caps` + `caps_from_info` + `combine_caps`; rewrite `create_context_menu`/`create_context_menu_shift` to be permission-aware (Task 1B).
+- `src/list_view.rs` (modify) — add `access::*` attributes to the child `DirectoryList` (Task 1B).
 - `Cargo.toml` (modify) — add `zip` dependency (Task 9).
+
+## Permission gates (apply to every action task)
+
+Each action wrapper begins by gathering the selection and checking capabilities;
+if the gate fails it returns silently (so the keyboard shortcut no-ops). The
+permission-aware context menu (Task 1B) hides the same items. `Caps` /
+`selection_caps` are defined in Task 1B.
+
+| Action(s) | Gate |
+| --- | --- |
+| Move to Trash (`delete`) | non-empty and all `caps.trash` |
+| Delete Permanently (`permanent-delete`) | non-empty and all `caps.delete` |
+| Cut, Move to… | non-empty and all `caps.delete` |
+| Copy, Copy to…, Compress, Email, Sharing | non-empty and all `caps.read` |
+| Rename | exactly 1 and `caps.rename` |
+| Create Link | non-empty and all `caps.read` |
+| Copy Path / URI / Name, Open in Terminal, Properties, Open | non-empty (no gate) |
+| Paste | clipboard non-empty; engine toasts destination errors |
 
 ---
 
@@ -107,6 +127,200 @@ Expected: compiles, 0 warnings. (`collect_selection` is unused for now — if de
 ```bash
 git add src/main.rs
 git commit -m "feat: add collect_selection and fix nested List-view path resolution"
+```
+
+---
+
+## Task 1B: Permission model + permission-aware context menus
+
+**Files:**
+- Modify: `src/utils.rs` (attributes; `Caps`/`caps_from_info`/`combine_caps`; rewrite the two menu builders)
+- Modify: `src/list_view.rs` (child DirectoryList attributes)
+- Modify: `src/main.rs` (add `selection_caps`; drop `#[allow(dead_code)]` on `collect_selection`)
+
+- [ ] **Step 1: Request `access::*` attributes in `get_directory_list`**
+
+In `src/utils.rs`, in `get_directory_list`, append the access attributes to the existing `.attributes(...)` string. The string currently ends with `...thumbnail::path,thumbnail::is-valid`. Change it to end with:
+
+```
+...thumbnail::path,thumbnail::is-valid,access::can-read,access::can-write,access::can-execute,access::can-delete,access::can-trash,access::can-rename
+```
+
+- [ ] **Step 2: Request `access::*` attributes in the List view's child list**
+
+In `src/list_view.rs`, the child `gtk::DirectoryList::builder().attributes("...")` (around line 36) currently ends with `...standard::n-children,standard::file`. Append the same access attributes:
+
+```
+...standard::n-children,standard::file,access::can-read,access::can-write,access::can-execute,access::can-delete,access::can-trash,access::can-rename
+```
+
+- [ ] **Step 3: Add `Caps` + helpers to `utils.rs` (with a unit test)**
+
+Add near the top of `src/utils.rs` (after the imports):
+
+```rust
+/// Filesystem capabilities for a selection, from GIO `access::*` attributes.
+#[derive(Clone, Copy)]
+pub struct Caps {
+    pub read: bool,
+    pub write: bool,
+    pub execute: bool,
+    pub delete: bool,
+    pub trash: bool,
+    pub rename: bool,
+}
+
+/// Read capabilities from a FileInfo. Missing attributes default to permitted
+/// (true) so actions are not hidden spuriously.
+pub fn caps_from_info(info: &gio::FileInfo) -> Caps {
+    let get = |attr: &str| if info.has_attribute(attr) { info.boolean(attr) } else { true };
+    Caps {
+        read: get("access::can-read"),
+        write: get("access::can-write"),
+        execute: get("access::can-execute"),
+        delete: get("access::can-delete"),
+        trash: get("access::can-trash"),
+        rename: get("access::can-rename"),
+    }
+}
+
+/// AND-combine capabilities across a selection. Empty selection -> all false.
+pub fn combine_caps(items: impl IntoIterator<Item = Caps>) -> Caps {
+    let mut it = items.into_iter();
+    match it.next() {
+        None => Caps { read: false, write: false, execute: false, delete: false, trash: false, rename: false },
+        Some(first) => it.fold(first, |a, b| Caps {
+            read: a.read && b.read,
+            write: a.write && b.write,
+            execute: a.execute && b.execute,
+            delete: a.delete && b.delete,
+            trash: a.trash && b.trash,
+            rename: a.rename && b.rename,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combine_caps_ands_and_empty_is_none() {
+        let a = Caps { read: true, write: true, execute: true, delete: true, trash: true, rename: true };
+        let b = Caps { read: true, write: false, execute: true, delete: false, trash: true, rename: true };
+        let c = combine_caps([a, b]);
+        assert!(c.read && c.trash && c.rename && c.execute);
+        assert!(!c.write && !c.delete);
+        let none = combine_caps(std::iter::empty::<Caps>());
+        assert!(!none.read && !none.delete && !none.trash);
+    }
+}
+```
+
+- [ ] **Step 4: Add `selection_caps` to `main.rs`**
+
+In `src/main.rs`, add a crate-level free function near `get_selection_model`:
+
+```rust
+/// (selected count, AND-combined capabilities) for the focused view's selection.
+pub(crate) fn selection_caps() -> (usize, utils::Caps) {
+    ACTIVE_MANAGER.with(|m| {
+        if let Some(manager) = m.borrow().as_ref() {
+            let sel = manager.collect_selection();
+            let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+            (sel.len(), caps)
+        } else {
+            (0, utils::combine_caps(std::iter::empty()))
+        }
+    })
+}
+```
+
+Then remove the `#[allow(dead_code)]` attribute above `fn collect_selection` (it is now used by `selection_caps`).
+
+- [ ] **Step 5: Rewrite the two menu builders to be permission-aware**
+
+In `src/utils.rs`, replace the entire bodies of `create_context_menu` and `create_context_menu_shift` (keep their `pub fn` signatures) with delegations to one shared builder, and add the builder:
+
+```rust
+pub fn create_context_menu() -> gio::Menu {
+    build_context_menu(false)
+}
+
+pub fn create_context_menu_shift() -> gio::Menu {
+    build_context_menu(true)
+}
+
+/// Build the context menu for the current selection, omitting actions the user
+/// is not permitted to perform. `shift` puts Delete Permanently above Move to Trash.
+fn build_context_menu(shift: bool) -> gio::Menu {
+    let (count, caps) = crate::selection_caps();
+    let menu = gio::Menu::new();
+
+    if count >= 1 {
+        let s = gio::Menu::new();
+        s.append(Some("Open"), Some("app.open"));
+        menu.append_section(None, &s);
+    }
+
+    let s2 = gio::Menu::new();
+    if count >= 1 && caps.delete { s2.append(Some("Cut"), Some("app.cut")); }
+    if count >= 1 && caps.read { s2.append(Some("Copy"), Some("app.copy")); }
+    if count >= 1 && caps.delete { s2.append(Some("Move to..."), Some("app.move-to")); }
+    if count >= 1 && caps.read { s2.append(Some("Copy to..."), Some("app.copy-to")); }
+    if s2.n_items() > 0 { menu.append_section(None, &s2); }
+
+    let s3 = gio::Menu::new();
+    if count == 1 && caps.rename { s3.append(Some("Rename..."), Some("app.rename")); }
+    if count >= 1 && caps.read { s3.append(Some("Create Link"), Some("app.create-link")); }
+    if count >= 1 && caps.read { s3.append(Some("Compress..."), Some("app.compress")); }
+    if count >= 1 && caps.read { s3.append(Some("Email..."), Some("app.email")); }
+    if shift {
+        if count >= 1 && caps.delete { s3.append(Some("Delete Permanently"), Some("app.permanent-delete")); }
+        if count >= 1 && caps.trash { s3.append(Some("Move to Trash"), Some("app.delete")); }
+    } else {
+        if count >= 1 && caps.trash { s3.append(Some("Move to Trash"), Some("app.delete")); }
+        if count >= 1 && caps.delete { s3.append(Some("Delete Permanently"), Some("app.permanent-delete")); }
+    }
+    if s3.n_items() > 0 { menu.append_section(None, &s3); }
+
+    let s4 = gio::Menu::new();
+    if count >= 1 {
+        s4.append(Some("Open in Terminal"), Some("app.open-terminal"));
+        s4.append(Some("Copy Path"), Some("app.copy-path"));
+        s4.append(Some("Copy URI"), Some("app.copy-uri"));
+        s4.append(Some("Copy Name"), Some("app.copy-name"));
+    }
+    #[cfg(target_os = "macos")]
+    if count >= 1 && caps.read { s4.append(Some("Sharing Options"), Some("app.sharing-options")); }
+    if s4.n_items() > 0 { menu.append_section(None, &s4); }
+
+    if count == 1 {
+        let s5 = gio::Menu::new();
+        s5.append(Some("Properties"), Some("app.properties"));
+        menu.append_section(None, &s5);
+    }
+
+    menu
+}
+```
+
+Note: this removes the static `section1..section5` bodies that previously listed every item unconditionally. `gio::Menu` (a `MenuModel`) has `.n_items()`.
+
+- [ ] **Step 6: Build + test**
+
+Run: `cargo build` — 0 warnings, 0 errors.
+Run: `cargo test` — the new `combine_caps_ands_and_empty_is_none` test (and Task 2's, once present) pass.
+
+- [ ] **Step 7: Manual verification**
+
+`cargo run --release`. Right-click a normal file → full menu. Right-click a file inside a directory you lack write access to (e.g. something under `/usr` or a root-owned file) → Cut / Move to… / Rename / Delete / Move to Trash are absent; Copy / Copy Path / Open remain. Select multiple where one is read-only → write actions disappear.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/utils.rs src/list_view.rs src/main.rs
+git commit -m "feat: permission-aware context menus via GIO access attributes"
 ```
 
 ---
@@ -423,25 +637,29 @@ In `src/main.rs`, replace the `delete_action` closure body (around lines 289-296
     delete_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                let paths: Vec<PathBuf> = manager.collect_selection().into_iter().map(|s| s.path).collect();
-                if !paths.is_empty() {
-                    file_ops::trash(manager.clone(), paths);
-                }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.trash { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::trash(manager.clone(), paths);
             }
         });
     });
 ```
 
-And replace the `permanent_delete_action` closure body (around lines 302-309) with:
+And replace the `permanent_delete_action` closure body (around lines 302-309) with (guarded on `caps.delete`):
 
 ```rust
     permanent_delete_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
             if let Some(manager) = m.borrow().as_ref() {
-                let paths: Vec<PathBuf> = manager.collect_selection().into_iter().map(|s| s.path).collect();
-                if !paths.is_empty() {
-                    file_ops::delete(manager.clone(), paths);
-                }
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.delete { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::delete(manager.clone(), paths);
             }
         });
     });
@@ -1202,16 +1420,9 @@ pub fn share(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     });
 ```
 
-- [ ] **Step 4: Hide "Sharing Options" on Linux**
+- [ ] **Step 4: Confirm "Sharing Options" is macOS-only**
 
-In `src/utils.rs`, the context menus are built in `create_context_menu` / `create_context_menu_shift`. Wrap the "Sharing Options" menu entry so it is only appended on macOS:
-
-```rust
-    #[cfg(target_os = "macos")]
-    menu.append(Some("Sharing Options"), Some("app.sharing-options"));
-```
-
-(Adjust to match the exact `menu.append(...)` call for the sharing item; locate it in `create_context_menu`.)
+This is already handled by Task 1B's `build_context_menu`, which appends "Sharing Options" inside `#[cfg(target_os = "macos")]` and only when `caps.read`. No code change here — just verify on Linux that the item is absent, and on macOS that it appears for readable selections. If the cfg guard is missing for any reason, add it in `build_context_menu`.
 
 - [ ] **Step 5: Build + verify + commit**
 
