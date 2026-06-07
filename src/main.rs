@@ -6,6 +6,7 @@ mod quicklook;
 mod sidebar;
 mod icon_view;
 mod list_view;
+mod undo;
 mod utils;
 
 use libadwaita as adw;
@@ -26,6 +27,8 @@ use std::cell::RefCell;
 thread_local! {
     static ACTIVE_MANAGER: RefCell<Option<Rc<ColumnManager>>> = const { RefCell::new(None) };
     static LABEL_TIMER: std::cell::RefCell<Option<glib::SourceId>> = const { std::cell::RefCell::new(None) };
+    static UNDO_ACTIONS: RefCell<Option<(gio::SimpleAction, gio::SimpleAction)>> =
+        const { RefCell::new(None) };
 }
 
 fn main() {
@@ -514,6 +517,32 @@ fn setup_actions(app: &Application) {
     });
     app.add_action(&duplicate_action);
     app.set_accels_for_action("app.duplicate", &["<Primary>d"]);
+
+    let undo_action = gio::SimpleAction::new("undo", None);
+    undo_action.set_enabled(false);
+    undo_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                undo::trigger_undo(manager.clone());
+            }
+        });
+    });
+    app.add_action(&undo_action);
+    app.set_accels_for_action("app.undo", &["<Primary>z"]);
+
+    let redo_action = gio::SimpleAction::new("redo", None);
+    redo_action.set_enabled(false);
+    redo_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                undo::trigger_redo(manager.clone());
+            }
+        });
+    });
+    app.add_action(&redo_action);
+    app.set_accels_for_action("app.redo", &["<Primary><Shift>z"]);
+
+    UNDO_ACTIONS.with(|a| *a.borrow_mut() = Some((undo_action, redo_action)));
 
     let compress_action = gio::SimpleAction::new("compress", None);
     compress_action.connect_activate(|_, _| {
@@ -1551,10 +1580,21 @@ fn build_preview_dock() -> (Box, ScrolledWindow) {
     (container, content)
 }
 
+/// What a name dialog confirmation should record for undo. `Rename` records a
+/// `Rename` op only when the name actually changes; `Create` records a `Create`
+/// op for the resulting item whether or not it was renamed (the item exists
+/// either way and undo should remove it).
+#[derive(Clone, Copy)]
+pub(crate) enum NameAction {
+    Rename,
+    Create(undo::CreateKind),
+}
+
 /// Generic "enter a name" dialog. Shows an entry pre-filled with `initial` (text
 /// pre-selected so typing replaces it); on confirm it renames `path` to the entered
 /// name via `set_display_name_async`. Used both for renaming and for naming a
 /// freshly-created item. Confirm response id is "confirm".
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show_name_dialog(
     parent: &impl IsA<gtk::Widget>,
     manager: Rc<ColumnManager>,
@@ -1563,6 +1603,7 @@ pub(crate) fn show_name_dialog(
     confirm_label: &str,
     initial: &str,
     path: PathBuf,
+    action: NameAction,
 ) {
     let initial = initial.to_string();
     let entry = gtk::Entry::builder()
@@ -1597,21 +1638,79 @@ pub(crate) fn show_name_dialog(
             if new_name != initial_c {
                 if let Err(reason) = file_ops::validate_filename(&new_name) {
                     manager_c.send_toast(&reason);
+                    // The untitled item was already created on disk; the rename
+                    // just failed validation, so it stays. Keep it undoable.
+                    if let NameAction::Create(kind) = action {
+                        manager_c.undo_record(undo::UndoOp::Create { kind, path: path_clone.clone() });
+                        let m = manager_c.clone();
+                        manager_c.send_toast_action("Created item", "Undo", move || {
+                            undo::trigger_undo(m.clone())
+                        });
+                    }
                     return;
                 }
                 let file = gio::File::for_path(&path_clone);
                 let manager_inner = manager_c.clone();
                 let name_to_report = new_name.clone();
+                let parent_dir = path_clone.parent().map(|p| p.to_path_buf());
+                let old_path = path_clone.clone();
                 file.set_display_name_async(
                     &new_name,
                     glib::Priority::DEFAULT,
                     gio::Cancellable::NONE,
                     move |res| match res {
-                        Ok(_) => manager_inner.send_toast(&format!("Renamed to {}", name_to_report)),
-                        Err(e) => manager_inner.send_toast(&format!("Error: {}", e)),
+                        Ok(_) => {
+                            let new_path = parent_dir
+                                .as_ref()
+                                .map(|d| d.join(&name_to_report))
+                                .unwrap_or_else(|| old_path.clone());
+                            let (verb, op) = match action {
+                                NameAction::Rename => (
+                                    format!("Renamed to {}", name_to_report),
+                                    undo::UndoOp::Rename { from: old_path.clone(), to: new_path },
+                                ),
+                                NameAction::Create(kind) => (
+                                    format!("Created {}", name_to_report),
+                                    undo::UndoOp::Create { kind, path: new_path },
+                                ),
+                            };
+                            manager_inner.undo_record(op);
+                            let m = manager_inner.clone();
+                            manager_inner.send_toast_action(&verb, "Undo", move || {
+                                undo::trigger_undo(m.clone())
+                            });
+                        }
+                        Err(e) => {
+                            manager_inner.send_toast(&format!("Error: {}", e));
+                            // Rename of a freshly-created item failed; the
+                            // untitled item remains, so keep it undoable.
+                            if let NameAction::Create(kind) = action {
+                                manager_inner
+                                    .undo_record(undo::UndoOp::Create { kind, path: old_path.clone() });
+                                let m = manager_inner.clone();
+                                manager_inner.send_toast_action("Created item", "Undo", move || {
+                                    undo::trigger_undo(m.clone())
+                                });
+                            }
+                        }
                     },
                 );
+            } else if let NameAction::Create(kind) = action {
+                // Created and kept the default "untitled" name.
+                manager_c.undo_record(undo::UndoOp::Create { kind, path: path_clone.clone() });
+                let m = manager_c.clone();
+                manager_c.send_toast_action("Created item", "Undo", move || {
+                    undo::trigger_undo(m.clone())
+                });
             }
+        } else if let NameAction::Create(kind) = action {
+            // Dialog dismissed: the freshly-created untitled item remains, so it
+            // is still undoable.
+            manager_c.undo_record(undo::UndoOp::Create { kind, path: path_clone.clone() });
+            let m = manager_c.clone();
+            manager_c.send_toast_action("Created item", "Undo", move || {
+                undo::trigger_undo(m.clone())
+            });
         }
     });
 
@@ -1635,6 +1734,7 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
         "Rename",
         old_name_str,
         path,
+        NameAction::Rename,
     );
 }
 
@@ -1675,6 +1775,7 @@ struct ColumnManager {
     cancel_flag: Rc<RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>>,
     toast_overlay: Rc<RefCell<Option<ToastOverlay>>>,
     clipboard: Rc<RefCell<Option<clipboard::ClipboardOp>>>,
+    pub(crate) undo_history: Rc<RefCell<undo::UndoHistory>>,
 }
 
 impl ColumnManager {
@@ -1701,6 +1802,7 @@ impl ColumnManager {
             cancel_flag: Rc::new(RefCell::new(None)),
             toast_overlay: Rc::new(RefCell::new(None)),
             clipboard: Rc::new(RefCell::new(None)),
+            undo_history: Rc::new(RefCell::new(undo::UndoHistory::new(16))),
         }
     }
 
@@ -1708,6 +1810,43 @@ impl ColumnManager {
         if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
             overlay.add_toast(Toast::new(message));
         }
+    }
+
+    /// Toast carrying an action button (e.g. "Undo"). Falls back to nothing if
+    /// the overlay isn't mounted yet.
+    pub(crate) fn send_toast_action(
+        &self,
+        message: &str,
+        label: &str,
+        action: impl Fn() + 'static,
+    ) {
+        if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
+            let toast = Toast::new(message);
+            toast.set_button_label(Some(label));
+            toast.connect_button_clicked(move |_| action());
+            overlay.add_toast(toast);
+        }
+    }
+
+    /// Record a just-performed op and refresh the undo/redo action state.
+    // Wired into the file-op call sites by the recording hooks (Tasks 5/6).
+    pub(crate) fn undo_record(&self, op: undo::UndoOp) {
+        self.undo_history.borrow_mut().record(op);
+        self.refresh_undo_actions();
+    }
+
+    /// Sync the `app.undo` / `app.redo` enabled state with the stacks.
+    pub(crate) fn refresh_undo_actions(&self) {
+        let (can_undo, can_redo) = {
+            let h = self.undo_history.borrow();
+            (h.can_undo(), h.can_redo())
+        };
+        UNDO_ACTIONS.with(|a| {
+            if let Some((undo, redo)) = a.borrow().as_ref() {
+                undo.set_enabled(can_undo);
+                redo.set_enabled(can_redo);
+            }
+        });
     }
 
     /// Path of the current single selection, if any.
