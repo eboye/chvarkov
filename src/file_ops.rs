@@ -267,13 +267,26 @@ pub fn transfer(
             if target.exists() {
                 let target_is_symlink = target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
                 let both_dirs = src.is_dir() && target.is_dir() && !target_is_symlink;
-                let choice = match apply_to_all {
-                    Some(c) => c,
-                    None => { let (c, all) = ask_conflict(&parent, &name, both_dirs).await; if all { apply_to_all = Some(c); } c }
+                let suggested = conflict_name(&name, |n| dest_dir.join(n).exists());
+                let (choice, keep_name) = match apply_to_all {
+                    Some(c) => (c, String::new()),
+                    None => {
+                        let (c, all, kn) = ask_conflict(&parent, &name, both_dirs, &suggested).await;
+                        if all { apply_to_all = Some(c); }
+                        (c, kn)
+                    }
                 };
                 match choice {
                     "skip" => { skipped += 1; continue; }
-                    "keep" => { target = unique_destination(&dest_dir, &name); }
+                    "keep" => {
+                        // Use the (possibly edited) name when it's valid and free;
+                        // otherwise auto-generate. Apply-to-all always auto-names.
+                        let edited_ok = apply_to_all.is_none()
+                            && !keep_name.trim().is_empty()
+                            && validate_filename(&keep_name).is_ok()
+                            && !dest_dir.join(&keep_name).exists();
+                        target = if edited_ok { dest_dir.join(&keep_name) } else { unique_destination(&dest_dir, &name) };
+                    }
                     _ => {
                         if both_dirs { merge_dirs = true; }
                         else {
@@ -484,9 +497,10 @@ async fn ask_file_error(parent: &gtk::Window, name: &str) -> &'static str {
     }
 }
 
-/// Show the collision dialog; returns (choice, apply_to_all).
-/// `merge` relabels the overwrite action "Merge" (directory-into-directory).
-async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool) -> (&'static str, bool) {
+/// Conflict dialog. Returns (choice, apply_to_all, keep_both_name). The entry is
+/// pre-filled with `suggested` and disabled when "apply to all" is ticked (a typed
+/// name can't apply to a whole batch).
+async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool, suggested: &str) -> (&'static str, bool, String) {
     let dialog = adw::AlertDialog::builder()
         .heading("Item already exists")
         .body(format!("\u{201c}{name}\u{201d} already exists in the destination. What do you want to do?"))
@@ -500,11 +514,30 @@ async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool) -> (&'stati
     dialog.set_default_response(Some("keep"));
     dialog.set_close_response("skip");
 
+    let entry = gtk::Entry::builder()
+        .text(suggested)
+        .activates_default(true)
+        .margin_top(8).margin_start(12).margin_end(12)
+        .build();
     let check = gtk::CheckButton::with_label("Apply to all remaining");
     check.set_margin_top(8);
     check.set_margin_start(12);
     check.set_margin_end(12);
-    dialog.set_extra_child(Some(&check));
+    check.set_margin_bottom(8);
+    {
+        let entry_c = entry.clone();
+        check.connect_toggled(move |c| entry_c.set_sensitive(!c.is_active()));
+    }
+    let extra = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
+    extra.append(&entry);
+    extra.append(&check);
+    dialog.set_extra_child(Some(&extra));
+
+    let entry_sel = entry.clone();
+    glib::idle_add_local_once(move || {
+        entry_sel.grab_focus();
+        entry_sel.select_region(0, -1);
+    });
 
     let response = dialog.choose_future(Some(parent)).await;
     let choice: &'static str = match response.as_str() {
@@ -512,7 +545,7 @@ async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool) -> (&'stati
         "keep" => "keep",
         _ => "skip",
     };
-    (choice, check.is_active())
+    (choice, check.is_active(), entry.text().to_string())
 }
 
 /// Move a batch of paths to the trash. One summary toast; collapses columns per success.
