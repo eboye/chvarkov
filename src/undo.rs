@@ -364,11 +364,14 @@ pub fn perform_undo(manager: Rc<ColumnManager>, op: UndoOp) {
             manager.undo_history.borrow_mut().push_redo(op);
         }
         manager.refresh_undo_actions();
-        manager.refresh();
+        // Show the toast before refreshing: refresh() defers an app.activate()
+        // that rebuilds the window content (and its ToastOverlay), so a toast
+        // added after it would be lost. Same order as the file_ops callers.
         let m = manager.clone();
         manager.send_toast_action(&summary("Undone", what, ok, fail), "Redo", move || {
             trigger_redo(m.clone())
         });
+        manager.refresh();
     });
 }
 
@@ -411,11 +414,12 @@ pub fn perform_redo(manager: Rc<ColumnManager>, op: UndoOp) {
             manager.undo_history.borrow_mut().push_undo(op);
         }
         manager.refresh_undo_actions();
-        manager.refresh();
+        // Show the toast before refreshing (see perform_undo for why).
         let m = manager.clone();
         manager.send_toast_action(&summary("Redone", what, ok, fail), "Undo", move || {
             trigger_undo(m.clone())
         });
+        manager.refresh();
     });
 }
 
