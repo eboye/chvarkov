@@ -78,6 +78,8 @@ pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
 /// full target path. Symlinks are recreated (not dereferenced). Copying a
 /// directory onto an existing directory MERGES (existing files are kept; only
 /// colliding leaf files are overwritten).
+// Retained as a tested primitive; the transfer engine now uses the chunked copy path.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     let meta = std::fs::symlink_metadata(src)?;
     if meta.file_type().is_symlink() {
@@ -97,6 +99,77 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         std::fs::copy(src, dst)?;
         Ok(())
     }
+}
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// Destination free space exceeded by `total`?
+pub fn needs_space(total: u64, free: u64) -> bool { total > free }
+
+/// Show the progress bar only for non-trivial operations.
+pub fn show_progress_for(total_bytes: u64, total_files: usize) -> bool {
+    total_bytes >= 16 * 1024 * 1024 || total_files > 100
+}
+
+/// One resolved top-level item's copy plan, grouped so a move can delete the
+/// source only if every file copied.
+pub struct ItemPlan {
+    pub dirs: Vec<PathBuf>,
+    pub files: Vec<(PathBuf, PathBuf)>,
+    pub symlinks: Vec<(PathBuf, PathBuf)>,
+}
+
+/// Build the plan for copying `src` to `dst`, adding regular-file sizes to `total`.
+/// Symlink-aware: links are recorded for recreation and never descended.
+pub fn scan_item(src: &Path, dst: &Path, total: &mut u64) -> std::io::Result<ItemPlan> {
+    let mut plan = ItemPlan { dirs: Vec::new(), files: Vec::new(), symlinks: Vec::new() };
+    fn walk(src: &Path, dst: &Path, total: &mut u64, plan: &mut ItemPlan) -> std::io::Result<()> {
+        let meta = std::fs::symlink_metadata(src)?;
+        if meta.file_type().is_symlink() {
+            plan.symlinks.push((src.to_path_buf(), dst.to_path_buf()));
+        } else if meta.is_dir() {
+            plan.dirs.push(dst.to_path_buf());
+            for entry in std::fs::read_dir(src)? {
+                let entry = entry?;
+                walk(&entry.path(), &dst.join(entry.file_name()), total, plan)?;
+            }
+        } else {
+            *total += meta.len();
+            plan.files.push((src.to_path_buf(), dst.to_path_buf()));
+        }
+        Ok(())
+    }
+    walk(src, dst, total, &mut plan)?;
+    Ok(plan)
+}
+
+/// Copy one regular file in chunks, adding written bytes to `bytes_done` and
+/// aborting (Err) if `cancel` is set between chunks. Leaves a partial `dst` on
+/// abort/error for the caller to delete.
+pub fn copy_file_chunked(src: &Path, dst: &Path, cancel: &AtomicBool, bytes_done: &AtomicU64) -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    if cancel.load(Ordering::Relaxed) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+    }
+    if let Some(parent) = dst.parent() { std::fs::create_dir_all(parent)?; }
+    let mut reader = std::fs::File::open(src)?;
+    let mut writer = std::fs::File::create(dst)?;
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+        }
+        let n = reader.read(&mut buf)?;
+        if n == 0 { break; }
+        writer.write_all(&buf[..n])?;
+        bytes_done.fetch_add(n as u64, Ordering::Relaxed);
+    }
+    writer.flush()?;
+    if let Ok(meta) = std::fs::metadata(src) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dst, std::fs::Permissions::from_mode(meta.permissions().mode()));
+    }
+    Ok(())
 }
 
 /// True if `path` equals `ancestor` or is nested under it. Inputs should be
@@ -141,123 +214,252 @@ pub fn transfer(
 ) {
     glib::spawn_future_local(async move {
         let mut apply_to_all: Option<&'static str> = None;
-        let mut done = 0usize;
         let mut skipped = 0usize;
         let mut failed = 0usize;
 
         let dest_canon = dest_dir.canonicalize().ok();
 
+        let mut work: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
         for src in sources {
             let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
             let src_canon = src.canonicalize().ok();
-
-            // Guard: refuse to move a directory whose path can't be verified —
-            // the into-itself check would be silently skipped.
             if src.is_dir() && src_canon.is_none() {
                 manager.send_toast(&format!("Can't verify \u{201c}{name}\u{201d}; skipped for safety"));
-                failed += 1;
-                continue;
+                failed += 1; continue;
             }
-
-            // Guard: don't place a directory inside itself or a descendant.
             if src.is_dir()
                 && let (Some(sc), Some(dc)) = (&src_canon, &dest_canon)
                     && is_within(dc, sc) {
                         manager.send_toast(&format!("Can't place \u{201c}{name}\u{201d} inside itself"));
-                        failed += 1;
-                        continue;
+                        failed += 1; continue;
                     }
-
             let mut target = dest_dir.join(&name);
-
-            // Guard: source and target resolve to the same path.
-            let same_path = match (&src_canon, target.canonicalize().ok()) {
-                (Some(a), Some(b)) => *a == b,
-                _ => false,
-            };
+            let same_path = matches!((&src_canon, target.canonicalize().ok()), (Some(a), Some(b)) if *a == b);
             if same_path {
                 match kind {
                     TransferKind::Copy => { target = unique_destination(&dest_dir, &name); }
                     TransferKind::Move => { skipped += 1; continue; }
                 }
             }
-
-            // Conflict resolution.
             let mut merge_dirs = false;
             if target.exists() {
                 let target_is_symlink = target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
                 let both_dirs = src.is_dir() && target.is_dir() && !target_is_symlink;
                 let choice = match apply_to_all {
                     Some(c) => c,
-                    None => {
-                        let (c, all) = ask_conflict(&parent, &name, both_dirs).await;
-                        if all { apply_to_all = Some(c); }
-                        c
-                    }
+                    None => { let (c, all) = ask_conflict(&parent, &name, both_dirs).await; if all { apply_to_all = Some(c); } c }
                 };
                 match choice {
                     "skip" => { skipped += 1; continue; }
                     "keep" => { target = unique_destination(&dest_dir, &name); }
                     _ => {
-                        if both_dirs {
-                            // Directory-into-directory is always merged, never destructively
-                            // replaced (even under "apply to all"), to avoid losing unique
-                            // destination files.
-                            merge_dirs = true;
-                        } else {
+                        if both_dirs { merge_dirs = true; }
+                        else {
                             let t = target.clone();
                             let removed = gio::spawn_blocking(move || {
-                                let is_real_dir = std::fs::symlink_metadata(&t)
-                                    .map(|m| m.file_type().is_dir())
-                                    .unwrap_or(false);
+                                let is_real_dir = std::fs::symlink_metadata(&t).map(|m| m.file_type().is_dir()).unwrap_or(false);
                                 if is_real_dir { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
                             }).await;
-                            if !matches!(removed, Ok(Ok(()))) {
-                                manager.send_toast(&format!("Could not replace {name}"));
-                                failed += 1;
-                                continue;
-                            }
+                            if !matches!(removed, Ok(Ok(()))) { manager.send_toast(&format!("Could not replace {name}")); failed += 1; continue; }
                         }
                     }
                 }
             }
+            work.push((src, target, merge_dirs));
+        }
 
-            let src_c = src.clone();
-            let target_c = target.clone();
-            let res = gio::spawn_blocking(move || -> std::io::Result<()> {
-                match kind {
-                    TransferKind::Copy => copy_recursive(&src_c, &target_c),
-                    TransferKind::Move => {
-                        if merge_dirs || target_c.exists() {
-                            copy_recursive(&src_c, &target_c)?;
-                            if src_c.is_dir() { std::fs::remove_dir_all(&src_c) } else { std::fs::remove_file(&src_c) }
-                        } else {
-                            match std::fs::rename(&src_c, &target_c) {
-                                Ok(()) => Ok(()),
-                                Err(e) if is_cross_device(&e) => {
-                                    copy_recursive(&src_c, &target_c)?;
-                                    if src_c.is_dir() { std::fs::remove_dir_all(&src_c) } else { std::fs::remove_file(&src_c) }
-                                }
-                                Err(e) => Err(e),
-                            }
-                        }
-                    }
-                }
-            }).await;
+        let scan_srcs: Vec<PathBuf> = work.iter().map(|(s, _, _)| s.clone()).collect();
+        let (total_bytes, total_files) = gio::spawn_blocking(move || {
+            let mut bytes = 0u64; let mut files = 0usize;
+            for s in &scan_srcs {
+                let mut n = 0u64;
+                if let Ok(p) = scan_item(s, std::path::Path::new("/x"), &mut n) { files += p.files.len(); }
+                bytes += n;
+            }
+            (bytes, files)
+        }).await.unwrap_or((0, 0));
 
-            match res {
-                Ok(Ok(())) => done += 1,
-                _ => { failed += 1; manager.send_toast(&format!("Failed to transfer {name}")); }
+        // Free-space gate for copies and cross-device moves (a same-filesystem
+        // move is an instant rename that uses no extra space, so it's exempt).
+        let cross_device_move = kind == TransferKind::Move
+            && work.iter().any(|(s, _, _)| !same_device(s, &dest_dir));
+        if (kind == TransferKind::Copy || cross_device_move)
+            && let Some(free) = free_space(&dest_dir)
+            && needs_space(total_bytes, free) {
+                let dialog = adw::AlertDialog::builder()
+                    .heading("Not enough space")
+                    .body(format!("This needs {} but only {} is free on the destination.",
+                        glib::format_size(total_bytes), glib::format_size(free)))
+                    .build();
+                dialog.add_response("ok", "OK");
+                dialog.present(Some(&parent));
+                return;
+            }
+
+        let show_bar = show_progress_for(total_bytes, total_files);
+        let verb_ing = if kind == TransferKind::Move { "Moving" } else { "Copying" };
+        let cancel = if show_bar {
+            manager.show_progress(&format!("{verb_ing}\u{2026}"))
+        } else {
+            std::sync::Arc::new(AtomicBool::new(false))
+        };
+        let bytes_done = std::sync::Arc::new(AtomicU64::new(0));
+        let files_done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let timer = if show_bar {
+            let m = manager.clone();
+            let bd = bytes_done.clone(); let fd = files_done.clone();
+            Some(glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                let done = bd.load(Ordering::Relaxed);
+                let frac = if total_bytes > 0 { done as f64 / total_bytes as f64 } else { 0.0 };
+                m.update_progress(frac, &format!("{verb_ing} {} of {} files", fd.load(Ordering::Relaxed), total_files));
+                glib::ControlFlow::Continue
+            }))
+        } else { None };
+
+        let mut done = 0usize;
+        let mut skip_all = false;
+        let mut cancelled = false;
+        for (src, target, merge_dirs) in work {
+            match transfer_item(&parent, src, target, kind, merge_dirs, cancel.clone(), bytes_done.clone(), files_done.clone(), &mut skip_all).await {
+                ItemOutcome::Ok => done += 1,
+                ItemOutcome::Failed => failed += 1,
+                ItemOutcome::Cancelled => { cancelled = true; break; }
             }
         }
+
+        if let Some(t) = timer { t.remove(); }
+        if show_bar { manager.hide_progress(); }
 
         let verb = if kind == TransferKind::Move { "Moved" } else { "Copied" };
         let mut extra = String::new();
         if skipped > 0 { extra.push_str(&format!(", skipped {skipped}")); }
         if failed > 0 { extra.push_str(&format!(", {failed} failed")); }
+        if cancelled { extra.push_str(", cancelled"); }
         manager.send_toast(&format!("{verb} {done} item(s){extra}"));
         manager.refresh();
     });
+}
+
+/// Whether `a` and `b` live on the same filesystem (device). Unknown → false
+/// (conservative: treat as cross-device so the free-space gate still applies).
+fn same_device(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(ma), Ok(mb)) => ma.dev() == mb.dev(),
+        _ => false,
+    }
+}
+
+/// Free bytes on the filesystem holding `dir`, if queryable.
+fn free_space(dir: &Path) -> Option<u64> {
+    let info = gio::File::for_path(dir)
+        .query_filesystem_info("filesystem::free", gio::Cancellable::NONE)
+        .ok()?;
+    Some(info.attribute_uint64("filesystem::free"))
+}
+
+enum ItemOutcome { Ok, Cancelled, Failed }
+
+#[allow(clippy::too_many_arguments)]
+async fn transfer_item(
+    parent: &gtk::Window,
+    src: PathBuf,
+    target: PathBuf,
+    kind: TransferKind,
+    merge_dirs: bool,
+    cancel: std::sync::Arc<AtomicBool>,
+    bytes_done: std::sync::Arc<AtomicU64>,
+    files_done: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    skip_all: &mut bool,
+) -> ItemOutcome {
+    if kind == TransferKind::Move && !merge_dirs && !target.exists() {
+        let s = src.clone(); let t = target.clone();
+        match gio::spawn_blocking(move || std::fs::rename(&s, &t)).await {
+            Ok(Ok(())) => return ItemOutcome::Ok,
+            Ok(Err(e)) if !is_cross_device(&e) => return ItemOutcome::Failed,
+            _ => {}
+        }
+    }
+
+    let s = src.clone(); let t = target.clone();
+    let plan = match gio::spawn_blocking(move || { let mut n = 0u64; scan_item(&s, &t, &mut n) }).await {
+        Ok(Ok(p)) => p,
+        _ => return ItemOutcome::Failed,
+    };
+
+    // Create the dir skeleton off the UI thread (deep trees can have many dirs).
+    let dirs = plan.dirs.clone();
+    let _ = gio::spawn_blocking(move || {
+        for d in &dirs { let _ = std::fs::create_dir_all(d); }
+    }).await;
+
+    let mut item_ok = true;
+    for (fsrc, fdst) in &plan.files {
+        loop {
+            let (fs, fd, c, b) = (fsrc.clone(), fdst.clone(), cancel.clone(), bytes_done.clone());
+            let res = gio::spawn_blocking(move || copy_file_chunked(&fs, &fd, &c, &b)).await;
+            if cancel.load(Ordering::Relaxed) {
+                let fd = fdst.clone();
+                let _ = gio::spawn_blocking(move || { let _ = std::fs::remove_file(&fd); }).await;
+                return ItemOutcome::Cancelled;
+            }
+            match res {
+                Ok(Ok(())) => { files_done.fetch_add(1, Ordering::Relaxed); break; }
+                _ => {
+                    let fd = fdst.clone();
+                    let _ = gio::spawn_blocking(move || { let _ = std::fs::remove_file(&fd); }).await;
+                    if *skip_all { item_ok = false; break; }
+                    let name = fsrc.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+                    match ask_file_error(parent, &name).await {
+                        "retry" => continue,
+                        "skip-all" => { *skip_all = true; item_ok = false; break; }
+                        "cancel" => { cancel.store(true, Ordering::Relaxed); return ItemOutcome::Cancelled; }
+                        _ => { item_ok = false; break; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Recreate symlinks off the UI thread.
+    let links = plan.symlinks.clone();
+    let _ = gio::spawn_blocking(move || {
+        for (lsrc, ldst) in &links {
+            if let Ok(tgt) = std::fs::read_link(lsrc) {
+                let _ = std::fs::remove_file(ldst);
+                let _ = std::os::unix::fs::symlink(tgt, ldst);
+            }
+        }
+    }).await;
+
+    if kind == TransferKind::Move && item_ok {
+        let s = src.clone();
+        let _ = gio::spawn_blocking(move || {
+            if s.is_dir() { std::fs::remove_dir_all(&s) } else { std::fs::remove_file(&s) }
+        }).await;
+    }
+
+    if item_ok { ItemOutcome::Ok } else { ItemOutcome::Failed }
+}
+
+async fn ask_file_error(parent: &gtk::Window, name: &str) -> &'static str {
+    let dialog = adw::AlertDialog::builder()
+        .heading("Couldn't copy file")
+        .body(format!("\u{201c}{name}\u{201d} could not be copied."))
+        .build();
+    dialog.add_response("skip", "Skip");
+    dialog.add_response("skip-all", "Skip All");
+    dialog.add_response("retry", "Retry");
+    dialog.add_response("cancel", "Cancel");
+    dialog.set_default_response(Some("retry"));
+    dialog.set_close_response("cancel");
+    match dialog.choose_future(Some(parent)).await.as_str() {
+        "skip" => "skip",
+        "skip-all" => "skip-all",
+        "retry" => "retry",
+        _ => "cancel",
+    }
 }
 
 /// Show the collision dialog; returns (choice, apply_to_all).
@@ -781,6 +983,55 @@ mod tests {
         let dst = tmp.join("copied");
         copy_recursive(&link, &dst).unwrap();
         assert!(dst.symlink_metadata().unwrap().file_type().is_symlink());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn needs_space_compares() {
+        assert!(needs_space(100, 50));
+        assert!(!needs_space(50, 100));
+        assert!(!needs_space(50, 50));
+    }
+
+    #[test]
+    fn show_progress_threshold() {
+        assert!(!show_progress_for(1024, 3));               // tiny
+        assert!(show_progress_for(20 * 1024 * 1024, 1));    // > 16 MiB
+        assert!(show_progress_for(1024, 200));              // > 100 files
+    }
+
+    #[test]
+    fn scan_item_counts_tree() {
+        let tmp = std::env::temp_dir().join(format!("chv_scan_{}", std::process::id()));
+        let src = tmp.join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("a.txt"), b"hello").unwrap();          // 5 bytes
+        std::fs::write(src.join("sub").join("b.txt"), b"hi").unwrap(); // 2 bytes
+        let mut total = 0u64;
+        let item = scan_item(&src, &tmp.join("dst"), &mut total).unwrap();
+        assert_eq!(total, 7);
+        assert_eq!(item.files.len(), 2);
+        assert!(item.dirs.iter().any(|d| d.ends_with("dst")));
+        assert!(item.dirs.iter().any(|d| d.ends_with("sub")));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn copy_file_chunked_copies_and_cancels() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        let tmp = std::env::temp_dir().join(format!("chv_chunk_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("s"); let dst = tmp.join("d");
+        std::fs::write(&src, vec![7u8; 1000]).unwrap();
+        let cancel = AtomicBool::new(false);
+        let bytes = AtomicU64::new(0);
+        copy_file_chunked(&src, &dst, &cancel, &bytes).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap().len(), 1000);
+        assert_eq!(bytes.load(Ordering::Relaxed), 1000);
+        let dst2 = tmp.join("d2");
+        cancel.store(true, Ordering::Relaxed);
+        let bytes2 = AtomicU64::new(0);
+        assert!(copy_file_chunked(&src, &dst2, &cancel, &bytes2).is_err());
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

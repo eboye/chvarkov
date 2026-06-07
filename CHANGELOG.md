@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-07
+
+### Added
+- Copy/move now shows a non-modal **progress bar** (with Cancel) for large operations, checks destination **free space** up front (refusing a copy/cross-device move that wouldn't fit), and offers **Skip / Skip All / Retry** when an individual file can't be copied. Cancelling removes the in-progress partial file and keeps already-copied items; a move only deletes a source once all of its files copied.
+
+### Internal
+- CI build images bumped from Fedora 41 (EOL) to Fedora 44.
+
+[0.5.0]: https://github.com/eboye/chvarkov/releases/tag/v0.5.0
+
 ## [0.4.2] - 2026-06-07
 
 ### Added
