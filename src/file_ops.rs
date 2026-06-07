@@ -18,29 +18,54 @@ fn spawn_reaped(cmd: &mut std::process::Command) -> std::io::Result<()> {
 }
 
 /// Split a file name into (stem, extension-with-dot). Leading-dot files
-/// (".bashrc") are treated as having no extension.
+/// (".bashrc") have no extension. A compound `.tar.*` is kept whole
+/// ("a.tar.gz" -> ("a", ".tar.gz")).
 fn split_name(file_name: &str) -> (String, String) {
     if let Some(idx) = file_name.rfind('.')
         && idx > 0 {
-            return (file_name[..idx].to_string(), file_name[idx..].to_string());
+            let mut stem = file_name[..idx].to_string();
+            let mut ext = file_name[idx..].to_string();
+            if let Some(tidx) = stem.rfind('.')
+                && tidx > 0
+                && &stem[tidx..] == ".tar" {
+                    ext = format!(".tar{ext}");
+                    stem.truncate(tidx);
+                }
+            return (stem, ext);
         }
     (file_name.to_string(), String::new())
 }
 
-/// Return a file name that does not collide, per the `exists` predicate.
-/// First tries "<stem> (copy)<ext>", then "<stem> (copy N)<ext>".
-pub fn dedupe_file_name(file_name: &str, exists: impl Fn(&str) -> bool) -> String {
-    if !exists(file_name) {
-        return file_name.to_string();
-    }
+/// Name for an explicit Duplicate: always adds the appendix, even if the bare
+/// name is free. "x.txt" -> "x (Copy).txt" -> "x (Copy 2).txt" ...
+#[allow(dead_code)] // TODO: remove when wired in Task 2
+pub fn copy_dup_name(file_name: &str, exists: impl Fn(&str) -> bool) -> String {
     let (stem, ext) = split_name(file_name);
-    let first = format!("{stem} (copy){ext}");
+    let first = format!("{stem} (Copy){ext}");
     if !exists(&first) {
         return first;
     }
     let mut n = 2;
     loop {
-        let cand = format!("{stem} (copy {n}){ext}");
+        let cand = format!("{stem} (Copy {n}){ext}");
+        if !exists(&cand) {
+            return cand;
+        }
+        n += 1;
+    }
+}
+
+/// A non-colliding name: the bare name if free, else numbered. "x.txt" (taken)
+/// -> "x (2).txt" -> "x (3).txt" ... Used for conflict Keep-Both, same-path
+/// copy, compress, and symlink dedup.
+pub fn conflict_name(file_name: &str, exists: impl Fn(&str) -> bool) -> String {
+    if !exists(file_name) {
+        return file_name.to_string();
+    }
+    let (stem, ext) = split_name(file_name);
+    let mut n = 2;
+    loop {
+        let cand = format!("{stem} ({n}){ext}");
         if !exists(&cand) {
             return cand;
         }
@@ -70,7 +95,7 @@ pub fn untitled_name(base: &str, ext: &str, exists: impl Fn(&str) -> bool) -> St
 
 /// Compute a non-colliding destination path inside `dir` for `file_name`.
 pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
-    let name = dedupe_file_name(file_name, |n| dir.join(n).exists());
+    let name = conflict_name(file_name, |n| dir.join(n).exists());
     dir.join(name)
 }
 
@@ -600,7 +625,7 @@ pub fn archive_name(paths: &[PathBuf]) -> String {
 pub fn compress(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     let Some(first) = paths.first() else { return };
     let Some(dir) = first.parent().map(|p| p.to_path_buf()) else { return };
-    let name = dedupe_file_name(&archive_name(&paths), |n| dir.join(n).exists());
+    let name = conflict_name(&archive_name(&paths), |n| dir.join(n).exists());
     let out = dir.join(name);
 
     glib::spawn_future_local(async move {
@@ -778,7 +803,7 @@ pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     for src in &paths {
         let Some(dir) = src.parent() else { continue };
         let Some(name) = src.file_name().and_then(|n| n.to_str()) else { continue };
-        let link_name = dedupe_file_name(&format!("{name} link"), |n| dir.join(n).exists());
+        let link_name = conflict_name(&format!("{name} link"), |n| dir.join(n).exists());
         let link_path = dir.join(link_name);
         match std::os::unix::fs::symlink(src, &link_path) {
             Ok(()) => made += 1,
@@ -849,27 +874,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dedupe_no_collision_returns_original() {
-        assert_eq!(dedupe_file_name("a.txt", |_| false), "a.txt");
-    }
-
-    #[test]
-    fn dedupe_first_collision_adds_copy() {
-        assert_eq!(dedupe_file_name("a.txt", |n| n == "a.txt"), "a (copy).txt");
-    }
-
-    #[test]
-    fn dedupe_second_collision_numbers() {
-        let taken = |n: &str| n == "a.txt" || n == "a (copy).txt";
-        assert_eq!(dedupe_file_name("a.txt", taken), "a (copy 2).txt");
-    }
-
-    #[test]
-    fn dedupe_dotfile_has_no_extension() {
-        assert_eq!(dedupe_file_name(".bashrc", |n| n == ".bashrc"), ".bashrc (copy)");
-    }
-
-    #[test]
     fn copy_recursive_copies_tree() {
         let tmp = std::env::temp_dir().join(format!("chv_test_{}", std::process::id()));
         let src = tmp.join("src");
@@ -886,7 +890,26 @@ mod tests {
         assert_eq!(split_name("a.txt"), ("a".to_string(), ".txt".to_string()));
         assert_eq!(split_name("noext"), ("noext".to_string(), String::new()));
         assert_eq!(split_name(".bashrc"), (".bashrc".to_string(), String::new()));
-        assert_eq!(split_name("a.tar.gz"), ("a.tar".to_string(), ".gz".to_string()));
+        assert_eq!(split_name("a.tar.gz"), ("a".to_string(), ".tar.gz".to_string()));
+        assert_eq!(split_name("a.tar"), ("a".to_string(), ".tar".to_string()));
+        assert_eq!(split_name("a.tar.bz2"), ("a".to_string(), ".tar.bz2".to_string()));
+    }
+
+    #[test]
+    fn copy_dup_name_scheme() {
+        assert_eq!(copy_dup_name("x.txt", |_| false), "x (Copy).txt");
+        assert_eq!(copy_dup_name("x.txt", |n| n == "x (Copy).txt"), "x (Copy 2).txt");
+        assert_eq!(copy_dup_name("a.tar.gz", |_| false), "a (Copy).tar.gz");
+        assert_eq!(copy_dup_name(".bashrc", |_| false), ".bashrc (Copy)");
+    }
+
+    #[test]
+    fn conflict_name_scheme() {
+        assert_eq!(conflict_name("x.txt", |_| false), "x.txt"); // free -> bare
+        assert_eq!(conflict_name("x.txt", |n| n == "x.txt"), "x (2).txt");
+        let taken = |n: &str| n == "x.txt" || n == "x (2).txt";
+        assert_eq!(conflict_name("x.txt", taken), "x (3).txt");
+        assert_eq!(conflict_name("a.tar.gz", |n| n == "a.tar.gz"), "a (2).tar.gz");
     }
 
     #[test]
@@ -922,7 +945,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x.txt"));
         std::fs::write(tmp.join("x.txt"), b"").unwrap();
-        assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x (copy).txt"));
+        assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x (2).txt"));
         std::fs::remove_dir_all(&tmp).ok();
     }
 
