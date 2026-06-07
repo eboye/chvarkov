@@ -1759,7 +1759,6 @@ impl ColumnManager {
 
     /// Record a just-performed op and refresh the undo/redo action state.
     // Wired into the file-op call sites by the recording hooks (Tasks 5/6).
-    #[allow(dead_code)]
     pub(crate) fn undo_record(&self, op: undo::UndoOp) {
         self.undo_history.borrow_mut().record(op);
         self.refresh_undo_actions();

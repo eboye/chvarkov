@@ -5,6 +5,7 @@ use gtk::prelude::*;
 use libadwaita as adw;
 use adw::prelude::*;
 use crate::ColumnManager;
+use crate::undo::UndoOp;
 
 /// Spawn `cmd`, reaping the child on a detached thread so it doesn't become a
 /// zombie. Returns Ok(()) if it launched.
@@ -355,9 +356,14 @@ pub fn transfer(
         let mut done = 0usize;
         let mut skip_all = false;
         let mut cancelled = false;
+        let mut recorded: Vec<(PathBuf, PathBuf)> = Vec::new();
         for (src, target, merge_dirs) in work {
+            let rec = if merge_dirs { None } else { Some((src.clone(), target.clone())) };
             match transfer_item(&parent, src, target, kind, merge_dirs, cancel.clone(), bytes_done.clone(), files_done.clone(), &mut skip_all).await {
-                ItemOutcome::Ok => done += 1,
+                ItemOutcome::Ok => {
+                    done += 1;
+                    if let Some(pair) = rec { recorded.push(pair); }
+                }
                 ItemOutcome::Failed => failed += 1,
                 ItemOutcome::Cancelled => { cancelled = true; break; }
             }
@@ -371,7 +377,26 @@ pub fn transfer(
         if skipped > 0 { extra.push_str(&format!(", skipped {skipped}")); }
         if failed > 0 { extra.push_str(&format!(", {failed} failed")); }
         if cancelled { extra.push_str(", cancelled"); }
-        manager.send_toast(&format!("{verb} {done} item(s){extra}"));
+
+        let undoable = !recorded.is_empty();
+        if undoable {
+            let op = match kind {
+                TransferKind::Move => UndoOp::Move { pairs: recorded },
+                TransferKind::Copy => UndoOp::Copy {
+                    sources: recorded.iter().map(|(s, _)| s.clone()).collect(),
+                    created: recorded.iter().map(|(_, d)| d.clone()).collect(),
+                },
+            };
+            manager.undo_record(op);
+        }
+
+        let msg = format!("{verb} {done} item(s){extra}");
+        if undoable {
+            let m = manager.clone();
+            manager.send_toast_action(&msg, "Undo", move || crate::undo::trigger_undo(m.clone()));
+        } else {
+            manager.send_toast(&msg);
+        }
         manager.refresh();
     });
 }
@@ -553,20 +578,28 @@ pub fn trash(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     glib::spawn_future_local(async move {
         let mut done = 0usize;
         let mut failed = 0usize;
+        let mut trashed: Vec<PathBuf> = Vec::new();
         for path in &paths {
             let file = gio::File::for_path(path);
             match file.trash_future(glib::Priority::DEFAULT).await {
-                Ok(_) => done += 1,
+                Ok(_) => { done += 1; trashed.push(path.clone()); }
                 Err(_) => failed += 1,
             }
         }
         if done > 0 {
             manager.on_files_deleted(&paths);
+            manager.undo_record(UndoOp::Trash { originals: trashed });
         }
-        manager.send_toast(&format!(
+        let msg = format!(
             "Moved {done} item(s) to Trash{}",
             if failed > 0 { format!(", {failed} failed") } else { String::new() }
-        ));
+        );
+        if done > 0 {
+            let m = manager.clone();
+            manager.send_toast_action(&msg, "Undo", move || crate::undo::trigger_undo(m.clone()));
+        } else {
+            manager.send_toast(&msg);
+        }
     });
 }
 
@@ -852,19 +885,29 @@ pub fn duplicate(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     glib::spawn_future_local(async move {
         let mut done = 0usize;
         let mut failed = 0usize;
+        let mut sources: Vec<PathBuf> = Vec::new();
+        let mut created: Vec<PathBuf> = Vec::new();
         for src in &paths {
             let Some(dir) = src.parent().map(|p| p.to_path_buf()) else { failed += 1; continue };
             let Some(name) = src.file_name().and_then(|n| n.to_str()) else { failed += 1; continue };
             let dst = dir.join(copy_dup_name(name, |n| dir.join(n).exists()));
             let s = src.clone();
-            match gio::spawn_blocking(move || copy_recursive(&s, &dst)).await {
-                Ok(Ok(())) => done += 1,
+            let d = dst.clone();
+            match gio::spawn_blocking(move || copy_recursive(&s, &d)).await {
+                Ok(Ok(())) => { done += 1; sources.push(src.clone()); created.push(dst); }
                 _ => failed += 1,
             }
         }
         let mut extra = String::new();
         if failed > 0 { extra.push_str(&format!(", {failed} failed")); }
-        manager.send_toast(&format!("Duplicated {done} item(s){extra}"));
+        let msg = format!("Duplicated {done} item(s){extra}");
+        if !created.is_empty() {
+            manager.undo_record(UndoOp::Duplicate { sources, created });
+            let m = manager.clone();
+            manager.send_toast_action(&msg, "Undo", move || crate::undo::trigger_undo(m.clone()));
+        } else {
+            manager.send_toast(&msg);
+        }
         manager.refresh();
     });
 }

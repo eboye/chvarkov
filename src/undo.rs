@@ -66,7 +66,6 @@ impl UndoHistory {
     /// Record a freshly-performed op: clear redo, push to undo, drop the
     /// oldest undo entry if over `cap`.
     // Called by `ColumnManager::undo_record` from the recording hooks (Tasks 5/6).
-    #[allow(dead_code)]
     pub fn record(&mut self, op: UndoOp) {
         self.redo.clear();
         self.undo.push(op);
