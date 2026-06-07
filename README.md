@@ -18,7 +18,7 @@
 
 ### File Operations
 - **Full Cut / Copy / Paste** with **system-clipboard interop** — copy in chvarkov and paste in Finder / GNOME Files (and vice-versa).
-- **New Folder** and **New Empty File** (with inline naming), **Move to… / Copy to…**, **Rename**, **Create Link** (symlink), and **Compress to Zip**.
+- **New Folder** and **New Empty File** (with inline naming), **Duplicate**, **Move to… / Copy to…**, **Rename**, **Create Link** (symlink), and **Compress to Zip**.
 - **Move to Trash** and **Delete Permanently** (with a confirmation prompt), all operating on the whole selection.
 - **Open in Terminal**, **Copy Path / URI / Name**, and **Email / Share** (native macOS Share sheet; `xdg-email` on Linux).
 
@@ -44,6 +44,7 @@
 | **Cut** | `Ctrl` + `X` (Linux) / `Cmd` + `X` (macOS) |
 | **Paste** | `Ctrl` + `V` (Linux) / `Cmd` + `V` (macOS) |
 | **Rename** | `F2` |
+| **Duplicate** | `Ctrl` + `D` (Linux) / `Cmd` + `D` (macOS) |
 | **New Folder** | `Ctrl` + `Shift` + `N` |
 | **New Empty File** | `Ctrl` + `N` |
 | **Create Link** | `Ctrl` + `Shift` + `M` |
