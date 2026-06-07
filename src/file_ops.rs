@@ -242,7 +242,10 @@ pub fn transfer(
 
         let dest_canon = dest_dir.canonicalize().ok();
 
-        let mut work: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
+        // (src, target, merge_dirs, replaced). `replaced` marks a target that
+        // pre-existed and was overwritten — such transfers are NOT recorded for
+        // undo (the overwritten file is gone and can't be restored).
+        let mut work: Vec<(PathBuf, PathBuf, bool, bool)> = Vec::new();
         for src in sources {
             let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
             let src_canon = src.canonicalize().ok();
@@ -265,6 +268,7 @@ pub fn transfer(
                 }
             }
             let mut merge_dirs = false;
+            let mut replaced = false;
             if target.exists() {
                 let target_is_symlink = target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
                 let both_dirs = src.is_dir() && target.is_dir() && !target_is_symlink;
@@ -297,14 +301,15 @@ pub fn transfer(
                                 if is_real_dir { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
                             }).await;
                             if !matches!(removed, Ok(Ok(()))) { manager.send_toast(&format!("Could not replace {name}")); failed += 1; continue; }
+                            replaced = true;
                         }
                     }
                 }
             }
-            work.push((src, target, merge_dirs));
+            work.push((src, target, merge_dirs, replaced));
         }
 
-        let scan_srcs: Vec<PathBuf> = work.iter().map(|(s, _, _)| s.clone()).collect();
+        let scan_srcs: Vec<PathBuf> = work.iter().map(|(s, _, _, _)| s.clone()).collect();
         let (total_bytes, total_files) = gio::spawn_blocking(move || {
             let mut bytes = 0u64; let mut files = 0usize;
             for s in &scan_srcs {
@@ -318,7 +323,7 @@ pub fn transfer(
         // Free-space gate for copies and cross-device moves (a same-filesystem
         // move is an instant rename that uses no extra space, so it's exempt).
         let cross_device_move = kind == TransferKind::Move
-            && work.iter().any(|(s, _, _)| !same_device(s, &dest_dir));
+            && work.iter().any(|(s, _, _, _)| !same_device(s, &dest_dir));
         if (kind == TransferKind::Copy || cross_device_move)
             && let Some(free) = free_space(&dest_dir)
             && needs_space(total_bytes, free) {
@@ -357,8 +362,8 @@ pub fn transfer(
         let mut skip_all = false;
         let mut cancelled = false;
         let mut recorded: Vec<(PathBuf, PathBuf)> = Vec::new();
-        for (src, target, merge_dirs) in work {
-            let rec = if merge_dirs { None } else { Some((src.clone(), target.clone())) };
+        for (src, target, merge_dirs, replaced) in work {
+            let rec = if merge_dirs || replaced { None } else { Some((src.clone(), target.clone())) };
             match transfer_item(&parent, src, target, kind, merge_dirs, cancel.clone(), bytes_done.clone(), files_done.clone(), &mut skip_all).await {
                 ItemOutcome::Ok => {
                     done += 1;
