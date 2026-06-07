@@ -374,7 +374,11 @@ async fn transfer_item(
         _ => return ItemOutcome::Failed,
     };
 
-    for d in &plan.dirs { let _ = std::fs::create_dir_all(d); }
+    // Create the dir skeleton off the UI thread (deep trees can have many dirs).
+    let dirs = plan.dirs.clone();
+    let _ = gio::spawn_blocking(move || {
+        for d in &dirs { let _ = std::fs::create_dir_all(d); }
+    }).await;
 
     let mut item_ok = true;
     for (fsrc, fdst) in &plan.files {
@@ -402,12 +406,16 @@ async fn transfer_item(
         }
     }
 
-    for (lsrc, ldst) in &plan.symlinks {
-        if let Ok(tgt) = std::fs::read_link(lsrc) {
-            let _ = std::fs::remove_file(ldst);
-            let _ = std::os::unix::fs::symlink(tgt, ldst);
+    // Recreate symlinks off the UI thread.
+    let links = plan.symlinks.clone();
+    let _ = gio::spawn_blocking(move || {
+        for (lsrc, ldst) in &links {
+            if let Ok(tgt) = std::fs::read_link(lsrc) {
+                let _ = std::fs::remove_file(ldst);
+                let _ = std::os::unix::fs::symlink(tgt, ldst);
+            }
         }
-    }
+    }).await;
 
     if kind == TransferKind::Move && item_ok {
         let s = src.clone();
