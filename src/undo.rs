@@ -90,6 +90,169 @@ impl UndoHistory {
     }
 }
 
+/// Percent-decode a freedesktop trashinfo `Path=` value (RFC2396; `/` is literal).
+fn url_decode(s: &str) -> String {
+    fn hex(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Parse a `.trashinfo` body → (decoded original path, deletion-date string).
+/// Returns `None` if there is no `[Trash Info]` section with a `Path=` line.
+pub fn parse_trashinfo(body: &str) -> Option<(PathBuf, String)> {
+    let mut in_section = false;
+    let mut path: Option<PathBuf> = None;
+    let mut date = String::new();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.eq_ignore_ascii_case("[Trash Info]") {
+            in_section = true;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("Path=") {
+            path = Some(PathBuf::from(url_decode(v)));
+        } else if let Some(v) = line.strip_prefix("DeletionDate=") {
+            date = v.to_string();
+        }
+    }
+    path.map(|p| (p, date))
+}
+
+/// Among `(orig, deletion_date, info_file)` entries, the one whose `orig`
+/// equals `target` with the lexicographically-greatest ISO-8601 date (newest).
+fn pick_newest<'a>(
+    entries: &'a [(PathBuf, String, PathBuf)],
+    target: &Path,
+) -> Option<&'a (PathBuf, String, PathBuf)> {
+    entries
+        .iter()
+        .filter(|(orig, _, _)| orig == target)
+        .max_by(|a, b| a.1.cmp(&b.1))
+}
+
+/// A destination that never overwrites: `desired` if free, else a `conflict_name`
+/// sibling (`name (2).ext`, …).
+fn safe_target(desired: &Path) -> PathBuf {
+    if !desired.exists() {
+        return desired.to_path_buf();
+    }
+    match (desired.parent(), desired.file_name().and_then(|n| n.to_str())) {
+        (Some(dir), Some(name)) => {
+            dir.join(crate::file_ops::conflict_name(name, |n| dir.join(n).exists()))
+        }
+        _ => desired.to_path_buf(),
+    }
+}
+
+/// Move `from`→`to`, falling back to copy+remove across devices. Blocking.
+fn move_path(from: &Path, to: &Path) -> std::io::Result<()> {
+    match std::fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            crate::file_ops::copy_recursive(from, to)?;
+            if from.is_dir() {
+                std::fs::remove_dir_all(from)
+            } else {
+                std::fs::remove_file(from)
+            }
+        }
+    }
+}
+
+/// Restore `original` from the trash to its place (or a `conflict_name` sibling
+/// if occupied). Best-effort, platform-specific. Blocking. Returns the path it
+/// landed at on success.
+#[cfg(not(target_os = "macos"))]
+pub fn restore_from_trash(original: &Path) -> std::io::Result<PathBuf> {
+    let trash = trash_dir();
+    let info_dir = trash.join("info");
+    let files_dir = trash.join("files");
+
+    let mut entries: Vec<(PathBuf, String, PathBuf)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&info_dir) {
+        for ent in rd.flatten() {
+            let info_path = ent.path();
+            if info_path.extension().and_then(|e| e.to_str()) != Some("trashinfo") {
+                continue;
+            }
+            if let Ok(body) = std::fs::read_to_string(&info_path)
+                && let Some((orig, date)) = parse_trashinfo(&body)
+            {
+                entries.push((orig, date, info_path));
+            }
+        }
+    }
+
+    let Some((_, _, info_path)) = pick_newest(&entries, original) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not found in trash",
+        ));
+    };
+    // The data file shares the info file's stem (drops the `.trashinfo`).
+    let stem = info_path
+        .file_stem()
+        .ok_or_else(|| std::io::Error::other("bad trashinfo name"))?;
+    let data_file = files_dir.join(stem);
+    let dest = safe_target(original);
+    move_path(&data_file, &dest)?;
+    let _ = std::fs::remove_file(info_path);
+    Ok(dest)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn trash_dir() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("Trash");
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    PathBuf::from(home).join(".local/share/Trash")
+}
+
+/// macOS best-effort: items land in `~/.Trash/<basename>`; move it back if present.
+#[cfg(target_os = "macos")]
+pub fn restore_from_trash(original: &Path) -> std::io::Result<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    let name = original
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("no file name"))?;
+    let trashed = PathBuf::from(home).join(".Trash").join(name);
+    if !trashed.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not found in Trash",
+        ));
+    }
+    let dest = safe_target(original);
+    move_path(&trashed, &dest)?;
+    Ok(dest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +295,43 @@ mod tests {
         assert!(h.can_redo());
         h.record(ren("x", "y"));
         assert!(!h.can_redo());
+    }
+
+    #[test]
+    fn parse_trashinfo_decodes_path() {
+        let body = "[Trash Info]\nPath=/home/u/My%20Docs/a.txt\nDeletionDate=2026-06-07T10:00:00\n";
+        let (p, d) = parse_trashinfo(body).unwrap();
+        assert_eq!(p, PathBuf::from("/home/u/My Docs/a.txt"));
+        assert_eq!(d, "2026-06-07T10:00:00");
+    }
+
+    #[test]
+    fn parse_trashinfo_rejects_malformed() {
+        assert!(parse_trashinfo("garbage\nno path here\n").is_none());
+    }
+
+    #[test]
+    fn pick_newest_selects_latest_match() {
+        let entries = vec![
+            (PathBuf::from("/a"), "2026-01-01T00:00:00".to_string(), PathBuf::from("i1")),
+            (PathBuf::from("/a"), "2026-06-01T00:00:00".to_string(), PathBuf::from("i2")),
+            (PathBuf::from("/b"), "2026-09-01T00:00:00".to_string(), PathBuf::from("i3")),
+        ];
+        let best = pick_newest(&entries, Path::new("/a")).unwrap();
+        assert_eq!(best.2, PathBuf::from("i2"));
+    }
+
+    #[test]
+    fn safe_target_avoids_overwrite() {
+        let tmp = std::env::temp_dir().join(format!("chv_undo_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let free = tmp.join("free.txt");
+        assert_eq!(safe_target(&free), free); // unoccupied → unchanged
+        let taken = tmp.join("taken.txt");
+        std::fs::write(&taken, b"x").unwrap();
+        let alt = safe_target(&taken); // occupied → conflict_name sibling
+        assert_ne!(alt, taken);
+        assert!(alt.file_name().unwrap().to_str().unwrap().contains("(2)"));
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
