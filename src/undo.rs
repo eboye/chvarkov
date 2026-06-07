@@ -13,7 +13,6 @@ use crate::ColumnManager;
 /// What kind of item a `Create` produced (drives how redo re-creates it).
 // Variants are constructed by the recording hooks (Tasks 5/6); the executors
 // here only match on them.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CreateKind {
     Folder,
@@ -23,7 +22,6 @@ pub enum CreateKind {
 /// One reversible operation. Each variant stores enough to invert AND re-apply.
 // Variants are constructed by the recording hooks (Tasks 5/6); the executors
 // here only match on them.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum UndoOp {
     /// `pairs` are forward `(from, to)`: undo moves `to`→`from`, redo `from`→`to`.

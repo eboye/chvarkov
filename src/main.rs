@@ -1580,10 +1580,21 @@ fn build_preview_dock() -> (Box, ScrolledWindow) {
     (container, content)
 }
 
+/// What a name dialog confirmation should record for undo. `Rename` records a
+/// `Rename` op only when the name actually changes; `Create` records a `Create`
+/// op for the resulting item whether or not it was renamed (the item exists
+/// either way and undo should remove it).
+#[derive(Clone, Copy)]
+pub(crate) enum NameAction {
+    Rename,
+    Create(undo::CreateKind),
+}
+
 /// Generic "enter a name" dialog. Shows an entry pre-filled with `initial` (text
 /// pre-selected so typing replaces it); on confirm it renames `path` to the entered
 /// name via `set_display_name_async`. Used both for renaming and for naming a
 /// freshly-created item. Confirm response id is "confirm".
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show_name_dialog(
     parent: &impl IsA<gtk::Widget>,
     manager: Rc<ColumnManager>,
@@ -1592,6 +1603,7 @@ pub(crate) fn show_name_dialog(
     confirm_label: &str,
     initial: &str,
     path: PathBuf,
+    action: NameAction,
 ) {
     let initial = initial.to_string();
     let entry = gtk::Entry::builder()
@@ -1631,16 +1643,53 @@ pub(crate) fn show_name_dialog(
                 let file = gio::File::for_path(&path_clone);
                 let manager_inner = manager_c.clone();
                 let name_to_report = new_name.clone();
+                let parent_dir = path_clone.parent().map(|p| p.to_path_buf());
+                let old_path = path_clone.clone();
                 file.set_display_name_async(
                     &new_name,
                     glib::Priority::DEFAULT,
                     gio::Cancellable::NONE,
                     move |res| match res {
-                        Ok(_) => manager_inner.send_toast(&format!("Renamed to {}", name_to_report)),
+                        Ok(_) => {
+                            let new_path = parent_dir
+                                .as_ref()
+                                .map(|d| d.join(&name_to_report))
+                                .unwrap_or_else(|| old_path.clone());
+                            let (verb, op) = match action {
+                                NameAction::Rename => (
+                                    format!("Renamed to {}", name_to_report),
+                                    undo::UndoOp::Rename { from: old_path.clone(), to: new_path },
+                                ),
+                                NameAction::Create(kind) => (
+                                    format!("Created {}", name_to_report),
+                                    undo::UndoOp::Create { kind, path: new_path },
+                                ),
+                            };
+                            manager_inner.undo_record(op);
+                            let m = manager_inner.clone();
+                            manager_inner.send_toast_action(&verb, "Undo", move || {
+                                undo::trigger_undo(m.clone())
+                            });
+                        }
                         Err(e) => manager_inner.send_toast(&format!("Error: {}", e)),
                     },
                 );
+            } else if let NameAction::Create(kind) = action {
+                // Created and kept the default "untitled" name.
+                manager_c.undo_record(undo::UndoOp::Create { kind, path: path_clone.clone() });
+                let m = manager_c.clone();
+                manager_c.send_toast_action("Created item", "Undo", move || {
+                    undo::trigger_undo(m.clone())
+                });
             }
+        } else if let NameAction::Create(kind) = action {
+            // Dialog dismissed: the freshly-created untitled item remains, so it
+            // is still undoable.
+            manager_c.undo_record(undo::UndoOp::Create { kind, path: path_clone.clone() });
+            let m = manager_c.clone();
+            manager_c.send_toast_action("Created item", "Undo", move || {
+                undo::trigger_undo(m.clone())
+            });
         }
     });
 
@@ -1664,6 +1713,7 @@ fn show_rename_dialog(parent: &ApplicationWindow, manager: Rc<ColumnManager>, ol
         "Rename",
         old_name_str,
         path,
+        NameAction::Rename,
     );
 }
 
