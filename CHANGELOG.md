@@ -5,13 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-06-07
 
 ### Added
 - **Duplicate** command (`Ctrl/Cmd+D`, right-click → Duplicate) that copies the selection in place as `name (Copy).ext`.
 
 ### Changed
 - Conflict "Keep Both" and other auto-naming now use Nautilus-style numbering — `name (2).ext`, `(3)`, … (was a lowercase `(copy)` scheme) — and preserve compound `.tar.*` extensions. The conflict dialog's Keep-Both name is now editable.
+
+[0.6.0]: https://github.com/eboye/chvarkov/releases/tag/v0.6.0
 
 ## [0.5.0] - 2026-06-07
 
