@@ -279,7 +279,11 @@ pub fn transfer(
             (bytes, files)
         }).await.unwrap_or((0, 0));
 
-        if kind == TransferKind::Copy
+        // Free-space gate for copies and cross-device moves (a same-filesystem
+        // move is an instant rename that uses no extra space, so it's exempt).
+        let cross_device_move = kind == TransferKind::Move
+            && work.iter().any(|(s, _, _)| !same_device(s, &dest_dir));
+        if (kind == TransferKind::Copy || cross_device_move)
             && let Some(free) = free_space(&dest_dir)
             && needs_space(total_bytes, free) {
                 let dialog = adw::AlertDialog::builder()
@@ -337,6 +341,16 @@ pub fn transfer(
     });
 }
 
+/// Whether `a` and `b` live on the same filesystem (device). Unknown → false
+/// (conservative: treat as cross-device so the free-space gate still applies).
+fn same_device(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(ma), Ok(mb)) => ma.dev() == mb.dev(),
+        _ => false,
+    }
+}
+
 /// Free bytes on the filesystem holding `dir`, if queryable.
 fn free_space(dir: &Path) -> Option<u64> {
     let info = gio::File::for_path(dir)
@@ -386,13 +400,15 @@ async fn transfer_item(
             let (fs, fd, c, b) = (fsrc.clone(), fdst.clone(), cancel.clone(), bytes_done.clone());
             let res = gio::spawn_blocking(move || copy_file_chunked(&fs, &fd, &c, &b)).await;
             if cancel.load(Ordering::Relaxed) {
-                let _ = std::fs::remove_file(fdst);
+                let fd = fdst.clone();
+                let _ = gio::spawn_blocking(move || { let _ = std::fs::remove_file(&fd); }).await;
                 return ItemOutcome::Cancelled;
             }
             match res {
                 Ok(Ok(())) => { files_done.fetch_add(1, Ordering::Relaxed); break; }
                 _ => {
-                    let _ = std::fs::remove_file(fdst);
+                    let fd = fdst.clone();
+                    let _ = gio::spawn_blocking(move || { let _ = std::fs::remove_file(&fd); }).await;
                     if *skip_all { item_ok = false; break; }
                     let name = fsrc.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
                     match ask_file_error(parent, &name).await {
