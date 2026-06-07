@@ -27,6 +27,8 @@ use std::cell::RefCell;
 thread_local! {
     static ACTIVE_MANAGER: RefCell<Option<Rc<ColumnManager>>> = const { RefCell::new(None) };
     static LABEL_TIMER: std::cell::RefCell<Option<glib::SourceId>> = const { std::cell::RefCell::new(None) };
+    static UNDO_ACTIONS: RefCell<Option<(gio::SimpleAction, gio::SimpleAction)>> =
+        const { RefCell::new(None) };
 }
 
 fn main() {
@@ -1676,6 +1678,7 @@ struct ColumnManager {
     cancel_flag: Rc<RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>>,
     toast_overlay: Rc<RefCell<Option<ToastOverlay>>>,
     clipboard: Rc<RefCell<Option<clipboard::ClipboardOp>>>,
+    pub(crate) undo_history: Rc<RefCell<undo::UndoHistory>>,
 }
 
 impl ColumnManager {
@@ -1702,6 +1705,7 @@ impl ColumnManager {
             cancel_flag: Rc::new(RefCell::new(None)),
             toast_overlay: Rc::new(RefCell::new(None)),
             clipboard: Rc::new(RefCell::new(None)),
+            undo_history: Rc::new(RefCell::new(undo::UndoHistory::new(16))),
         }
     }
 
@@ -1709,6 +1713,45 @@ impl ColumnManager {
         if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
             overlay.add_toast(Toast::new(message));
         }
+    }
+
+    /// Toast carrying an action button (e.g. "Undo"). Falls back to nothing if
+    /// the overlay isn't mounted yet.
+    #[allow(dead_code)]
+    pub(crate) fn send_toast_action(
+        &self,
+        message: &str,
+        label: &str,
+        action: impl Fn() + 'static,
+    ) {
+        if let Some(overlay) = self.toast_overlay.borrow().as_ref() {
+            let toast = Toast::new(message);
+            toast.set_button_label(Some(label));
+            toast.connect_button_clicked(move |_| action());
+            overlay.add_toast(toast);
+        }
+    }
+
+    /// Record a just-performed op and refresh the undo/redo action state.
+    #[allow(dead_code)]
+    pub(crate) fn undo_record(&self, op: undo::UndoOp) {
+        self.undo_history.borrow_mut().record(op);
+        self.refresh_undo_actions();
+    }
+
+    /// Sync the `app.undo` / `app.redo` enabled state with the stacks.
+    #[allow(dead_code)]
+    pub(crate) fn refresh_undo_actions(&self) {
+        let (can_undo, can_redo) = {
+            let h = self.undo_history.borrow();
+            (h.can_undo(), h.can_redo())
+        };
+        UNDO_ACTIONS.with(|a| {
+            if let Some((undo, redo)) = a.borrow().as_ref() {
+                undo.set_enabled(can_undo);
+                redo.set_enabled(can_redo);
+            }
+        });
     }
 
     /// Path of the current single selection, if any.
