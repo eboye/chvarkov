@@ -2,7 +2,36 @@
 
 **chvarkov** is a modern, high-performance file manager designed for the GNOME desktop and macOS. It brings the efficiency of macOS-style **Miller Columns** to both platforms, built from the ground up using **Rust**, **GTK4**, and **Libadwaita**.
 
-<img width="1112" height="659" alt="image" src="https://github.com/user-attachments/assets/06c8a9dc-f8fb-4151-8fbe-7ac5a90f8724" />
+<p align="center">
+  <img width="1112" height="659" alt="chvarkov main window — Miller Columns view with a docked file preview" src="https://github.com/user-attachments/assets/06c8a9dc-f8fb-4151-8fbe-7ac5a90f8724" />
+</p>
+
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/miller-light.png" alt="Miller Columns view, light theme" width="100%"><br>
+      <sub><b>Miller Columns — light</b></sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/miller-dark.png" alt="Miller Columns view, dark theme" width="100%"><br>
+      <sub><b>Miller Columns — dark</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/preview.png" alt="Docked live preview pane with syntax-highlighted text" width="100%"><br>
+      <sub><b>Docked live preview</b></sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/mobile.png" alt="Adaptive narrow layout with collapsed sidebar" width="100%"><br>
+      <sub><b>Adaptive (narrow) layout</b></sub>
+    </td>
+  </tr>
+</table>
+
+> _Gallery images live in [`docs/screenshots/`](docs/screenshots/) — see that folder's README for the expected filenames._
 
 ## ✨ Features
 
