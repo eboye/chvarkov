@@ -1638,6 +1638,15 @@ pub(crate) fn show_name_dialog(
             if new_name != initial_c {
                 if let Err(reason) = file_ops::validate_filename(&new_name) {
                     manager_c.send_toast(&reason);
+                    // The untitled item was already created on disk; the rename
+                    // just failed validation, so it stays. Keep it undoable.
+                    if let NameAction::Create(kind) = action {
+                        manager_c.undo_record(undo::UndoOp::Create { kind, path: path_clone.clone() });
+                        let m = manager_c.clone();
+                        manager_c.send_toast_action("Created item", "Undo", move || {
+                            undo::trigger_undo(m.clone())
+                        });
+                    }
                     return;
                 }
                 let file = gio::File::for_path(&path_clone);
@@ -1671,7 +1680,19 @@ pub(crate) fn show_name_dialog(
                                 undo::trigger_undo(m.clone())
                             });
                         }
-                        Err(e) => manager_inner.send_toast(&format!("Error: {}", e)),
+                        Err(e) => {
+                            manager_inner.send_toast(&format!("Error: {}", e));
+                            // Rename of a freshly-created item failed; the
+                            // untitled item remains, so keep it undoable.
+                            if let NameAction::Create(kind) = action {
+                                manager_inner
+                                    .undo_record(undo::UndoOp::Create { kind, path: old_path.clone() });
+                                let m = manager_inner.clone();
+                                manager_inner.send_toast_action("Created item", "Undo", move || {
+                                    undo::trigger_undo(m.clone())
+                                });
+                            }
+                        }
                     },
                 );
             } else if let NameAction::Create(kind) = action {
