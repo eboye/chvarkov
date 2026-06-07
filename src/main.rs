@@ -6,6 +6,7 @@ mod quicklook;
 mod sidebar;
 mod icon_view;
 mod list_view;
+mod undo;
 mod utils;
 
 use libadwaita as adw;
