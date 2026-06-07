@@ -20,6 +20,7 @@
 - **Full Cut / Copy / Paste** with **system-clipboard interop** — copy in chvarkov and paste in Finder / GNOME Files (and vice-versa).
 - **New Folder** and **New Empty File** (with inline naming), **Duplicate**, **Move to… / Copy to…**, **Rename**, **Create Link** (symlink), and **Compress to Zip**.
 - **Move to Trash** and **Delete Permanently** (with a confirmation prompt), all operating on the whole selection.
+- **Undo / Redo** (`Ctrl/Cmd+Z`, `Ctrl+Shift+Z`, plus an **Undo** button on the result toast) for move, rename, trash, copy, duplicate, and create — a bounded history of the last 16 operations. Undoing a copy/duplicate/create sends the new items to Trash so nothing is lost; undo never overwrites (a clashing original is restored as `name (2)`).
 - **Open in Terminal**, **Copy Path / URI / Name**, and **Email / Share** (native macOS Share sheet; `xdg-email` on Linux).
 
 ### Safe by design
@@ -45,6 +46,8 @@
 | **Paste** | `Ctrl` + `V` (Linux) / `Cmd` + `V` (macOS) |
 | **Rename** | `F2` |
 | **Duplicate** | `Ctrl` + `D` (Linux) / `Cmd` + `D` (macOS) |
+| **Undo** | `Ctrl` + `Z` (Linux) / `Cmd` + `Z` (macOS) |
+| **Redo** | `Ctrl` + `Shift` + `Z` (Linux) / `Cmd` + `Shift` + `Z` (macOS) |
 | **New Folder** | `Ctrl` + `Shift` + `N` |
 | **New Empty File** | `Ctrl` + `N` |
 | **Create Link** | `Ctrl` + `Shift` + `M` |

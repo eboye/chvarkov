@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Undo / Redo** (`Ctrl/Cmd+Z` and `Ctrl+Shift+Z`, plus an **Undo** button on the result toast) for Move, Rename, Trash, Copy, Duplicate, and New Folder/File. The history is a bounded stack (last 16 operations). Undoing a copy/duplicate/create moves the created items to Trash (recoverable); undo never overwrites — if an item's original location is occupied it is restored as `name (2)`.
+
 ## [0.6.0] - 2026-06-07
 
 ### Added
