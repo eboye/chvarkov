@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Copy/move now shows a non-modal **progress bar** (with Cancel) for large operations, checks destination **free space** up front (refusing a copy that wouldn't fit), and offers **Skip / Skip All / Retry** when an individual file can't be copied. Cancelling removes the in-progress partial file and keeps already-copied items; a move only deletes a source once all of its files copied.
+
 ## [0.4.2] - 2026-06-07
 
 ### Added
