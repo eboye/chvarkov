@@ -15,7 +15,7 @@ jobs:
     name: Build binary tarball
     runs-on: ubuntu-latest
     container:
-      image: fedora:41
+      image: fedora:44
     permissions:
       contents: write
 
@@ -83,7 +83,7 @@ jobs:
       - name: Build AppImage inside Fedora 41 container
         uses: addnab/docker-run-action@v3
         with:
-          image: fedora:41
+          image: fedora:44
           options: -v ${{ github.workspace }}:/workspace -w /workspace --privileged
           run: |
             dnf install -y \
