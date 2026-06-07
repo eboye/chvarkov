@@ -18,29 +18,53 @@ fn spawn_reaped(cmd: &mut std::process::Command) -> std::io::Result<()> {
 }
 
 /// Split a file name into (stem, extension-with-dot). Leading-dot files
-/// (".bashrc") are treated as having no extension.
+/// (".bashrc") have no extension. A compound `.tar.*` is kept whole
+/// ("a.tar.gz" -> ("a", ".tar.gz")).
 fn split_name(file_name: &str) -> (String, String) {
     if let Some(idx) = file_name.rfind('.')
         && idx > 0 {
-            return (file_name[..idx].to_string(), file_name[idx..].to_string());
+            let mut stem = file_name[..idx].to_string();
+            let mut ext = file_name[idx..].to_string();
+            if let Some(tidx) = stem.rfind('.')
+                && tidx > 0
+                && &stem[tidx..] == ".tar" {
+                    ext = format!(".tar{ext}");
+                    stem.truncate(tidx);
+                }
+            return (stem, ext);
         }
     (file_name.to_string(), String::new())
 }
 
-/// Return a file name that does not collide, per the `exists` predicate.
-/// First tries "<stem> (copy)<ext>", then "<stem> (copy N)<ext>".
-pub fn dedupe_file_name(file_name: &str, exists: impl Fn(&str) -> bool) -> String {
-    if !exists(file_name) {
-        return file_name.to_string();
-    }
+/// Name for an explicit Duplicate: always adds the appendix, even if the bare
+/// name is free. "x.txt" -> "x (Copy).txt" -> "x (Copy 2).txt" ...
+pub fn copy_dup_name(file_name: &str, exists: impl Fn(&str) -> bool) -> String {
     let (stem, ext) = split_name(file_name);
-    let first = format!("{stem} (copy){ext}");
+    let first = format!("{stem} (Copy){ext}");
     if !exists(&first) {
         return first;
     }
     let mut n = 2;
     loop {
-        let cand = format!("{stem} (copy {n}){ext}");
+        let cand = format!("{stem} (Copy {n}){ext}");
+        if !exists(&cand) {
+            return cand;
+        }
+        n += 1;
+    }
+}
+
+/// A non-colliding name: the bare name if free, else numbered. "x.txt" (taken)
+/// -> "x (2).txt" -> "x (3).txt" ... Used for conflict Keep-Both, same-path
+/// copy, compress, and symlink dedup.
+pub fn conflict_name(file_name: &str, exists: impl Fn(&str) -> bool) -> String {
+    if !exists(file_name) {
+        return file_name.to_string();
+    }
+    let (stem, ext) = split_name(file_name);
+    let mut n = 2;
+    loop {
+        let cand = format!("{stem} ({n}){ext}");
         if !exists(&cand) {
             return cand;
         }
@@ -70,7 +94,7 @@ pub fn untitled_name(base: &str, ext: &str, exists: impl Fn(&str) -> bool) -> St
 
 /// Compute a non-colliding destination path inside `dir` for `file_name`.
 pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
-    let name = dedupe_file_name(file_name, |n| dir.join(n).exists());
+    let name = conflict_name(file_name, |n| dir.join(n).exists());
     dir.join(name)
 }
 
@@ -78,8 +102,6 @@ pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
 /// full target path. Symlinks are recreated (not dereferenced). Copying a
 /// directory onto an existing directory MERGES (existing files are kept; only
 /// colliding leaf files are overwritten).
-// Retained as a tested primitive; the transfer engine now uses the chunked copy path.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     let meta = std::fs::symlink_metadata(src)?;
     if meta.file_type().is_symlink() {
@@ -245,13 +267,26 @@ pub fn transfer(
             if target.exists() {
                 let target_is_symlink = target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
                 let both_dirs = src.is_dir() && target.is_dir() && !target_is_symlink;
-                let choice = match apply_to_all {
-                    Some(c) => c,
-                    None => { let (c, all) = ask_conflict(&parent, &name, both_dirs).await; if all { apply_to_all = Some(c); } c }
+                let suggested = conflict_name(&name, |n| dest_dir.join(n).exists());
+                let (choice, keep_name) = match apply_to_all {
+                    Some(c) => (c, String::new()),
+                    None => {
+                        let (c, all, kn) = ask_conflict(&parent, &name, both_dirs, &suggested).await;
+                        if all { apply_to_all = Some(c); }
+                        (c, kn)
+                    }
                 };
                 match choice {
                     "skip" => { skipped += 1; continue; }
-                    "keep" => { target = unique_destination(&dest_dir, &name); }
+                    "keep" => {
+                        // Use the (possibly edited) name when it's valid and free;
+                        // otherwise auto-generate. Apply-to-all always auto-names.
+                        let edited_ok = apply_to_all.is_none()
+                            && !keep_name.trim().is_empty()
+                            && validate_filename(&keep_name).is_ok()
+                            && !dest_dir.join(&keep_name).exists();
+                        target = if edited_ok { dest_dir.join(&keep_name) } else { unique_destination(&dest_dir, &name) };
+                    }
                     _ => {
                         if both_dirs { merge_dirs = true; }
                         else {
@@ -462,9 +497,10 @@ async fn ask_file_error(parent: &gtk::Window, name: &str) -> &'static str {
     }
 }
 
-/// Show the collision dialog; returns (choice, apply_to_all).
-/// `merge` relabels the overwrite action "Merge" (directory-into-directory).
-async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool) -> (&'static str, bool) {
+/// Conflict dialog. Returns (choice, apply_to_all, keep_both_name). The entry is
+/// pre-filled with `suggested` and disabled when "apply to all" is ticked (a typed
+/// name can't apply to a whole batch).
+async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool, suggested: &str) -> (&'static str, bool, String) {
     let dialog = adw::AlertDialog::builder()
         .heading("Item already exists")
         .body(format!("\u{201c}{name}\u{201d} already exists in the destination. What do you want to do?"))
@@ -478,11 +514,30 @@ async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool) -> (&'stati
     dialog.set_default_response(Some("keep"));
     dialog.set_close_response("skip");
 
+    let entry = gtk::Entry::builder()
+        .text(suggested)
+        .activates_default(true)
+        .margin_top(8).margin_start(12).margin_end(12)
+        .build();
     let check = gtk::CheckButton::with_label("Apply to all remaining");
     check.set_margin_top(8);
     check.set_margin_start(12);
     check.set_margin_end(12);
-    dialog.set_extra_child(Some(&check));
+    check.set_margin_bottom(8);
+    {
+        let entry_c = entry.clone();
+        check.connect_toggled(move |c| entry_c.set_sensitive(!c.is_active()));
+    }
+    let extra = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
+    extra.append(&entry);
+    extra.append(&check);
+    dialog.set_extra_child(Some(&extra));
+
+    let entry_sel = entry.clone();
+    glib::idle_add_local_once(move || {
+        entry_sel.grab_focus();
+        entry_sel.select_region(0, -1);
+    });
 
     let response = dialog.choose_future(Some(parent)).await;
     let choice: &'static str = match response.as_str() {
@@ -490,7 +545,7 @@ async fn ask_conflict(parent: &gtk::Window, name: &str, merge: bool) -> (&'stati
         "keep" => "keep",
         _ => "skip",
     };
-    (choice, check.is_active())
+    (choice, check.is_active(), entry.text().to_string())
 }
 
 /// Move a batch of paths to the trash. One summary toast; collapses columns per success.
@@ -600,7 +655,7 @@ pub fn archive_name(paths: &[PathBuf]) -> String {
 pub fn compress(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     let Some(first) = paths.first() else { return };
     let Some(dir) = first.parent().map(|p| p.to_path_buf()) else { return };
-    let name = dedupe_file_name(&archive_name(&paths), |n| dir.join(n).exists());
+    let name = conflict_name(&archive_name(&paths), |n| dir.join(n).exists());
     let out = dir.join(name);
 
     glib::spawn_future_local(async move {
@@ -778,7 +833,7 @@ pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     for src in &paths {
         let Some(dir) = src.parent() else { continue };
         let Some(name) = src.file_name().and_then(|n| n.to_str()) else { continue };
-        let link_name = dedupe_file_name(&format!("{name} link"), |n| dir.join(n).exists());
+        let link_name = conflict_name(&format!("{name} link"), |n| dir.join(n).exists());
         let link_path = dir.join(link_name);
         match std::os::unix::fs::symlink(src, &link_path) {
             Ok(()) => made += 1,
@@ -789,6 +844,29 @@ pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
         manager.send_toast(&format!("Created {made} link(s)"));
         manager.refresh();
     }
+}
+
+/// Duplicate each path in place with a `(Copy)` name (symlink-preserving). Never
+/// prompts: a fresh non-colliding name is always generated.
+pub fn duplicate(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
+    glib::spawn_future_local(async move {
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for src in &paths {
+            let Some(dir) = src.parent().map(|p| p.to_path_buf()) else { failed += 1; continue };
+            let Some(name) = src.file_name().and_then(|n| n.to_str()) else { failed += 1; continue };
+            let dst = dir.join(copy_dup_name(name, |n| dir.join(n).exists()));
+            let s = src.clone();
+            match gio::spawn_blocking(move || copy_recursive(&s, &dst)).await {
+                Ok(Ok(())) => done += 1,
+                _ => failed += 1,
+            }
+        }
+        let mut extra = String::new();
+        if failed > 0 { extra.push_str(&format!(", {failed} failed")); }
+        manager.send_toast(&format!("Duplicated {done} item(s){extra}"));
+        manager.refresh();
+    });
 }
 
 /// Create a new empty folder in `dir` with a non-colliding "untitled folder"
@@ -849,27 +927,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dedupe_no_collision_returns_original() {
-        assert_eq!(dedupe_file_name("a.txt", |_| false), "a.txt");
-    }
-
-    #[test]
-    fn dedupe_first_collision_adds_copy() {
-        assert_eq!(dedupe_file_name("a.txt", |n| n == "a.txt"), "a (copy).txt");
-    }
-
-    #[test]
-    fn dedupe_second_collision_numbers() {
-        let taken = |n: &str| n == "a.txt" || n == "a (copy).txt";
-        assert_eq!(dedupe_file_name("a.txt", taken), "a (copy 2).txt");
-    }
-
-    #[test]
-    fn dedupe_dotfile_has_no_extension() {
-        assert_eq!(dedupe_file_name(".bashrc", |n| n == ".bashrc"), ".bashrc (copy)");
-    }
-
-    #[test]
     fn copy_recursive_copies_tree() {
         let tmp = std::env::temp_dir().join(format!("chv_test_{}", std::process::id()));
         let src = tmp.join("src");
@@ -886,7 +943,26 @@ mod tests {
         assert_eq!(split_name("a.txt"), ("a".to_string(), ".txt".to_string()));
         assert_eq!(split_name("noext"), ("noext".to_string(), String::new()));
         assert_eq!(split_name(".bashrc"), (".bashrc".to_string(), String::new()));
-        assert_eq!(split_name("a.tar.gz"), ("a.tar".to_string(), ".gz".to_string()));
+        assert_eq!(split_name("a.tar.gz"), ("a".to_string(), ".tar.gz".to_string()));
+        assert_eq!(split_name("a.tar"), ("a".to_string(), ".tar".to_string()));
+        assert_eq!(split_name("a.tar.bz2"), ("a".to_string(), ".tar.bz2".to_string()));
+    }
+
+    #[test]
+    fn copy_dup_name_scheme() {
+        assert_eq!(copy_dup_name("x.txt", |_| false), "x (Copy).txt");
+        assert_eq!(copy_dup_name("x.txt", |n| n == "x (Copy).txt"), "x (Copy 2).txt");
+        assert_eq!(copy_dup_name("a.tar.gz", |_| false), "a (Copy).tar.gz");
+        assert_eq!(copy_dup_name(".bashrc", |_| false), ".bashrc (Copy)");
+    }
+
+    #[test]
+    fn conflict_name_scheme() {
+        assert_eq!(conflict_name("x.txt", |_| false), "x.txt"); // free -> bare
+        assert_eq!(conflict_name("x.txt", |n| n == "x.txt"), "x (2).txt");
+        let taken = |n: &str| n == "x.txt" || n == "x (2).txt";
+        assert_eq!(conflict_name("x.txt", taken), "x (3).txt");
+        assert_eq!(conflict_name("a.tar.gz", |n| n == "a.tar.gz"), "a (2).tar.gz");
     }
 
     #[test]
@@ -922,7 +998,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x.txt"));
         std::fs::write(tmp.join("x.txt"), b"").unwrap();
-        assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x (copy).txt"));
+        assert_eq!(unique_destination(&tmp, "x.txt"), tmp.join("x (2).txt"));
         std::fs::remove_dir_all(&tmp).ok();
     }
 

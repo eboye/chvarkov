@@ -499,6 +499,22 @@ fn setup_actions(app: &Application) {
     app.add_action(&create_link_action);
     app.set_accels_for_action("app.create-link", &["<Shift><Control>m"]);
 
+    let duplicate_action = gio::SimpleAction::new("duplicate", None);
+    duplicate_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                let sel = manager.collect_selection();
+                if sel.is_empty() { return; }
+                let caps = utils::combine_caps(sel.iter().map(|s| utils::caps_from_info(&s.file_info)));
+                if !caps.read { return; }
+                let paths: Vec<PathBuf> = sel.into_iter().map(|s| s.path).collect();
+                file_ops::duplicate(manager.clone(), paths);
+            }
+        });
+    });
+    app.add_action(&duplicate_action);
+    app.set_accels_for_action("app.duplicate", &["<Primary>d"]);
+
     let compress_action = gio::SimpleAction::new("compress", None);
     compress_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
