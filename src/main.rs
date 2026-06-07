@@ -518,6 +518,32 @@ fn setup_actions(app: &Application) {
     app.add_action(&duplicate_action);
     app.set_accels_for_action("app.duplicate", &["<Primary>d"]);
 
+    let undo_action = gio::SimpleAction::new("undo", None);
+    undo_action.set_enabled(false);
+    undo_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                undo::trigger_undo(manager.clone());
+            }
+        });
+    });
+    app.add_action(&undo_action);
+    app.set_accels_for_action("app.undo", &["<Primary>z"]);
+
+    let redo_action = gio::SimpleAction::new("redo", None);
+    redo_action.set_enabled(false);
+    redo_action.connect_activate(|_, _| {
+        ACTIVE_MANAGER.with(|m| {
+            if let Some(manager) = m.borrow().as_ref() {
+                undo::trigger_redo(manager.clone());
+            }
+        });
+    });
+    app.add_action(&redo_action);
+    app.set_accels_for_action("app.redo", &["<Primary><Shift>z"]);
+
+    UNDO_ACTIONS.with(|a| *a.borrow_mut() = Some((undo_action, redo_action)));
+
     let compress_action = gio::SimpleAction::new("compress", None);
     compress_action.connect_activate(|_, _| {
         ACTIVE_MANAGER.with(|m| {
@@ -1717,7 +1743,6 @@ impl ColumnManager {
 
     /// Toast carrying an action button (e.g. "Undo"). Falls back to nothing if
     /// the overlay isn't mounted yet.
-    #[allow(dead_code)]
     pub(crate) fn send_toast_action(
         &self,
         message: &str,
@@ -1733,6 +1758,7 @@ impl ColumnManager {
     }
 
     /// Record a just-performed op and refresh the undo/redo action state.
+    // Wired into the file-op call sites by the recording hooks (Tasks 5/6).
     #[allow(dead_code)]
     pub(crate) fn undo_record(&self, op: undo::UndoOp) {
         self.undo_history.borrow_mut().record(op);
@@ -1740,7 +1766,6 @@ impl ColumnManager {
     }
 
     /// Sync the `app.undo` / `app.redo` enabled state with the stacks.
-    #[allow(dead_code)]
     pub(crate) fn refresh_undo_actions(&self) {
         let (can_undo, can_redo) = {
             let h = self.undo_history.borrow();

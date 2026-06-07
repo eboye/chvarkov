@@ -1,12 +1,19 @@
 //! Undo/redo: a bounded two-stack history plus the inverse/forward executors.
 //! Pure stack logic and the freedesktop `.trashinfo` parser are unit-tested;
 //! the filesystem work is kept thin and runs off the UI thread.
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use gtk4 as gtk;
+use gtk::prelude::*;
+use gtk::{gio, glib};
+
+use crate::ColumnManager;
 
 /// What kind of item a `Create` produced (drives how redo re-creates it).
+// Variants are constructed by the recording hooks (Tasks 5/6); the executors
+// here only match on them.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CreateKind {
     Folder,
@@ -14,6 +21,9 @@ pub enum CreateKind {
 }
 
 /// One reversible operation. Each variant stores enough to invert AND re-apply.
+// Variants are constructed by the recording hooks (Tasks 5/6); the executors
+// here only match on them.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum UndoOp {
     /// `pairs` are forward `(from, to)`: undo moves `to`→`from`, redo `from`→`to`.
@@ -55,6 +65,8 @@ impl UndoHistory {
 
     /// Record a freshly-performed op: clear redo, push to undo, drop the
     /// oldest undo entry if over `cap`.
+    // Called by `ColumnManager::undo_record` from the recording hooks (Tasks 5/6).
+    #[allow(dead_code)]
     pub fn record(&mut self, op: UndoOp) {
         self.redo.clear();
         self.undo.push(op);
@@ -91,6 +103,8 @@ impl UndoHistory {
 }
 
 /// Percent-decode a freedesktop trashinfo `Path=` value (RFC2396; `/` is literal).
+// Used only by the Linux `restore_from_trash` (and tests); dead on macOS.
+#[allow(dead_code)]
 fn url_decode(s: &str) -> String {
     fn hex(b: u8) -> Option<u8> {
         match b {
@@ -104,12 +118,13 @@ fn url_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
-                out.push(h * 16 + l);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
+        {
+            out.push(h * 16 + l);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;
@@ -119,6 +134,8 @@ fn url_decode(s: &str) -> String {
 
 /// Parse a `.trashinfo` body → (decoded original path, deletion-date string).
 /// Returns `None` if there is no `[Trash Info]` section with a `Path=` line.
+// Used only by the Linux `restore_from_trash` (and tests); dead on macOS.
+#[allow(dead_code)]
 pub fn parse_trashinfo(body: &str) -> Option<(PathBuf, String)> {
     let mut in_section = false;
     let mut path: Option<PathBuf> = None;
@@ -143,6 +160,8 @@ pub fn parse_trashinfo(body: &str) -> Option<(PathBuf, String)> {
 
 /// Among `(orig, deletion_date, info_file)` entries, the one whose `orig`
 /// equals `target` with the lexicographically-greatest ISO-8601 date (newest).
+// Used only by the Linux `restore_from_trash` (and tests); dead on macOS.
+#[allow(dead_code)]
 fn pick_newest<'a>(
     entries: &'a [(PathBuf, String, PathBuf)],
     target: &Path,
@@ -251,6 +270,153 @@ pub fn restore_from_trash(original: &Path) -> std::io::Result<PathBuf> {
     let dest = safe_target(original);
     move_path(&trashed, &dest)?;
     Ok(dest)
+}
+
+/// Build the result-toast text, e.g. "Undone Move: 2 item(s)" or
+/// "Undone Move: 1 item(s), 1 failed".
+fn summary(verb: &str, what: &str, ok: usize, fail: usize) -> String {
+    if fail > 0 {
+        format!("{verb} {what}: {ok} item(s), {fail} failed")
+    } else {
+        format!("{verb} {what}: {ok} item(s)")
+    }
+}
+
+/// Move `from`→`to` off the UI thread, never overwriting (`safe_target`).
+async fn move_back(to: PathBuf, desired_from: PathBuf) -> bool {
+    let dest = safe_target(&desired_from);
+    matches!(
+        gio::spawn_blocking(move || move_path(&to, &dest)).await,
+        Ok(Ok(()))
+    )
+}
+
+/// Trash a path off the UI thread.
+async fn trash_path(p: PathBuf) -> bool {
+    gio::File::for_path(&p)
+        .trash_future(glib::Priority::DEFAULT)
+        .await
+        .is_ok()
+}
+
+/// Copy `src`→`dst` off the UI thread (symlink-preserving), never overwriting.
+async fn copy_path(src: PathBuf, dst: PathBuf) -> bool {
+    let dest = safe_target(&dst);
+    matches!(
+        gio::spawn_blocking(move || crate::file_ops::copy_recursive(&src, &dest)).await,
+        Ok(Ok(()))
+    )
+}
+
+/// Pop the most recent undoable op and execute its inverse. Public entry point
+/// for the `app.undo` action and the toast "Undo" button.
+pub fn trigger_undo(manager: Rc<ColumnManager>) {
+    let op = manager.undo_history.borrow_mut().pop_undo();
+    match op {
+        None => manager.send_toast("Nothing to undo"),
+        Some(op) => perform_undo(manager, op),
+    }
+}
+
+/// Pop the most recent redoable op and re-apply it.
+pub fn trigger_redo(manager: Rc<ColumnManager>) {
+    let op = manager.undo_history.borrow_mut().pop_redo();
+    match op {
+        None => manager.send_toast("Nothing to redo"),
+        Some(op) => perform_redo(manager, op),
+    }
+}
+
+/// Execute the inverse of `op`. On success the op moves to the redo stack and a
+/// "Redo" toast is shown.
+pub fn perform_undo(manager: Rc<ColumnManager>, op: UndoOp) {
+    glib::spawn_future_local(async move {
+        let what = op.describe();
+        let (mut ok, mut fail) = (0usize, 0usize);
+        match &op {
+            UndoOp::Move { pairs } => {
+                for (from, to) in pairs {
+                    if move_back(to.clone(), from.clone()).await { ok += 1 } else { fail += 1 }
+                }
+            }
+            UndoOp::Rename { from, to } => {
+                if move_back(to.clone(), from.clone()).await { ok += 1 } else { fail += 1 }
+            }
+            UndoOp::Trash { originals } => {
+                for p in originals {
+                    let p = p.clone();
+                    match gio::spawn_blocking(move || restore_from_trash(&p)).await {
+                        Ok(Ok(_)) => ok += 1,
+                        _ => fail += 1,
+                    }
+                }
+            }
+            UndoOp::Copy { created, .. } | UndoOp::Duplicate { created, .. } => {
+                for p in created {
+                    if trash_path(p.clone()).await { ok += 1 } else { fail += 1 }
+                }
+            }
+            UndoOp::Create { path, .. } => {
+                if trash_path(path.clone()).await { ok += 1 } else { fail += 1 }
+            }
+        }
+        if ok > 0 {
+            manager.undo_history.borrow_mut().push_redo(op);
+        }
+        manager.refresh_undo_actions();
+        manager.refresh();
+        let m = manager.clone();
+        manager.send_toast_action(&summary("Undone", what, ok, fail), "Redo", move || {
+            trigger_redo(m.clone())
+        });
+    });
+}
+
+/// Re-apply `op` (forward). On success the op moves back to the undo stack.
+pub fn perform_redo(manager: Rc<ColumnManager>, op: UndoOp) {
+    glib::spawn_future_local(async move {
+        let what = op.describe();
+        let (mut ok, mut fail) = (0usize, 0usize);
+        match &op {
+            UndoOp::Move { pairs } => {
+                for (from, to) in pairs {
+                    if move_back(from.clone(), to.clone()).await { ok += 1 } else { fail += 1 }
+                }
+            }
+            UndoOp::Rename { from, to } => {
+                if move_back(from.clone(), to.clone()).await { ok += 1 } else { fail += 1 }
+            }
+            UndoOp::Trash { originals } => {
+                for p in originals {
+                    if trash_path(p.clone()).await { ok += 1 } else { fail += 1 }
+                }
+            }
+            UndoOp::Copy { sources, created } | UndoOp::Duplicate { sources, created } => {
+                for (s, d) in sources.iter().zip(created.iter()) {
+                    if copy_path(s.clone(), d.clone()).await { ok += 1 } else { fail += 1 }
+                }
+            }
+            UndoOp::Create { kind, path } => {
+                let path = path.clone();
+                let kind = *kind;
+                let res = gio::spawn_blocking(move || match kind {
+                    CreateKind::Folder => std::fs::create_dir(&path),
+                    CreateKind::File => std::fs::File::create(&path).map(|_| ()),
+                })
+                .await;
+                if matches!(res, Ok(Ok(()))) { ok += 1 } else { fail += 1 }
+            }
+        }
+        if ok > 0 {
+            manager.undo_history.borrow_mut().push_undo(op);
+        }
+        manager.refresh_undo_actions();
+        manager.refresh();
+        let m = manager.clone();
+        manager.send_toast_action(&summary("Redone", what, ok, fail), "Undo", move || {
+            trigger_undo(m.clone())
+        });
+    });
 }
 
 #[cfg(test)]
