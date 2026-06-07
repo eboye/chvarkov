@@ -38,7 +38,6 @@ fn split_name(file_name: &str) -> (String, String) {
 
 /// Name for an explicit Duplicate: always adds the appendix, even if the bare
 /// name is free. "x.txt" -> "x (Copy).txt" -> "x (Copy 2).txt" ...
-#[allow(dead_code)] // TODO: remove when wired in Task 2
 pub fn copy_dup_name(file_name: &str, exists: impl Fn(&str) -> bool) -> String {
     let (stem, ext) = split_name(file_name);
     let first = format!("{stem} (Copy){ext}");
@@ -103,8 +102,6 @@ pub fn unique_destination(dir: &Path, file_name: &str) -> PathBuf {
 /// full target path. Symlinks are recreated (not dereferenced). Copying a
 /// directory onto an existing directory MERGES (existing files are kept; only
 /// colliding leaf files are overwritten).
-// Retained as a tested primitive; the transfer engine now uses the chunked copy path.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     let meta = std::fs::symlink_metadata(src)?;
     if meta.file_type().is_symlink() {
@@ -814,6 +811,29 @@ pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
         manager.send_toast(&format!("Created {made} link(s)"));
         manager.refresh();
     }
+}
+
+/// Duplicate each path in place with a `(Copy)` name (symlink-preserving). Never
+/// prompts: a fresh non-colliding name is always generated.
+pub fn duplicate(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
+    glib::spawn_future_local(async move {
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for src in &paths {
+            let Some(dir) = src.parent().map(|p| p.to_path_buf()) else { failed += 1; continue };
+            let Some(name) = src.file_name().and_then(|n| n.to_str()) else { failed += 1; continue };
+            let dst = dir.join(copy_dup_name(name, |n| dir.join(n).exists()));
+            let s = src.clone();
+            match gio::spawn_blocking(move || copy_recursive(&s, &dst)).await {
+                Ok(Ok(())) => done += 1,
+                _ => failed += 1,
+            }
+        }
+        let mut extra = String::new();
+        if failed > 0 { extra.push_str(&format!(", {failed} failed")); }
+        manager.send_toast(&format!("Duplicated {done} item(s){extra}"));
+        manager.refresh();
+    });
 }
 
 /// Create a new empty folder in `dir` with a non-colliding "untitled folder"

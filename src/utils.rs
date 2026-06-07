@@ -126,6 +126,7 @@ fn build_context_menu(shift: bool) -> gio::Menu {
 
     let s3 = gio::Menu::new();
     if count == 1 && caps.rename { s3.append(Some("Rename..."), Some("app.rename")); }
+    if count >= 1 && caps.read && crate::target_dir_writable() { s3.append(Some("Duplicate"), Some("app.duplicate")); }
     if count >= 1 && caps.read { s3.append(Some("Create Link"), Some("app.create-link")); }
     if count >= 1 && caps.read { s3.append(Some("Compress..."), Some("app.compress")); }
     if count >= 1 && caps.read { s3.append(Some("Email..."), Some("app.email")); }
