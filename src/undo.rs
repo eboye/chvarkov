@@ -100,8 +100,6 @@ impl UndoHistory {
 }
 
 /// Percent-decode a freedesktop trashinfo `Path=` value (RFC2396; `/` is literal).
-// Used only by the Linux `restore_from_trash` (and tests); dead on macOS.
-#[allow(dead_code)]
 fn url_decode(s: &str) -> String {
     fn hex(b: u8) -> Option<u8> {
         match b {
@@ -131,8 +129,6 @@ fn url_decode(s: &str) -> String {
 
 /// Parse a `.trashinfo` body → (decoded original path, deletion-date string).
 /// Returns `None` if there is no `[Trash Info]` section with a `Path=` line.
-// Used only by the Linux `restore_from_trash` (and tests); dead on macOS.
-#[allow(dead_code)]
 pub fn parse_trashinfo(body: &str) -> Option<(PathBuf, String)> {
     let mut in_section = false;
     let mut path: Option<PathBuf> = None;
@@ -157,8 +153,6 @@ pub fn parse_trashinfo(body: &str) -> Option<(PathBuf, String)> {
 
 /// Among `(orig, deletion_date, info_file)` entries, the one whose `orig`
 /// equals `target` with the lexicographically-greatest ISO-8601 date (newest).
-// Used only by the Linux `restore_from_trash` (and tests); dead on macOS.
-#[allow(dead_code)]
 fn pick_newest<'a>(
     entries: &'a [(PathBuf, String, PathBuf)],
     target: &Path,
@@ -189,19 +183,20 @@ fn move_path(from: &Path, to: &Path) -> std::io::Result<()> {
         Ok(()) => Ok(()),
         Err(_) => {
             crate::file_ops::copy_recursive(from, to)?;
-            if from.is_dir() {
-                std::fs::remove_dir_all(from)
-            } else {
-                std::fs::remove_file(from)
-            }
+            crate::file_ops::remove_path(from)
         }
     }
 }
 
 /// Restore `original` from the trash to its place (or a `conflict_name` sibling
-/// if occupied). Best-effort, platform-specific. Blocking. Returns the path it
-/// landed at on success.
-#[cfg(not(target_os = "macos"))]
+/// if occupied). Best-effort. Blocking. Returns the path it landed at on success.
+///
+/// This uses the freedesktop trash spec (`$XDG_DATA_HOME/Trash/{files,info}`) on
+/// *both* Linux and macOS: GIO's `g_file_trash` writes to that layout on macOS
+/// too (it does not use the Finder `~/.Trash`), so matching on the recorded
+/// absolute original path — rather than just a basename in `~/.Trash` — is both
+/// correct for the volume GIO actually used and immune to restoring a wrong,
+/// same-named item that happened to be in the trash.
 pub fn restore_from_trash(original: &Path) -> std::io::Result<PathBuf> {
     let trash = trash_dir();
     let info_dir = trash.join("info");
@@ -239,7 +234,6 @@ pub fn restore_from_trash(original: &Path) -> std::io::Result<PathBuf> {
     Ok(dest)
 }
 
-#[cfg(not(target_os = "macos"))]
 fn trash_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         if !xdg.is_empty() {
@@ -248,25 +242,6 @@ fn trash_dir() -> PathBuf {
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
     PathBuf::from(home).join(".local/share/Trash")
-}
-
-/// macOS best-effort: items land in `~/.Trash/<basename>`; move it back if present.
-#[cfg(target_os = "macos")]
-pub fn restore_from_trash(original: &Path) -> std::io::Result<PathBuf> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
-    let name = original
-        .file_name()
-        .ok_or_else(|| std::io::Error::other("no file name"))?;
-    let trashed = PathBuf::from(home).join(".Trash").join(name);
-    if !trashed.exists() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "not found in Trash",
-        ));
-    }
-    let dest = safe_target(original);
-    move_path(&trashed, &dest)?;
-    Ok(dest)
 }
 
 /// Build the result-toast text, e.g. "Undone Move: 2 item(s)" or
@@ -359,6 +334,11 @@ pub fn perform_undo(manager: Rc<ColumnManager>, op: UndoOp) {
         }
         if ok > 0 {
             manager.undo_history.borrow_mut().push_redo(op);
+        } else {
+            // Nothing was inverted (e.g. a transient FS error). Return the op to
+            // the undo stack rather than dropping it, so the user can retry — it
+            // was already popped in trigger_undo.
+            manager.undo_history.borrow_mut().push_undo(op);
         }
         manager.refresh_undo_actions();
         // Show the toast before refreshing: refresh() defers an app.activate()
@@ -409,6 +389,10 @@ pub fn perform_redo(manager: Rc<ColumnManager>, op: UndoOp) {
         }
         if ok > 0 {
             manager.undo_history.borrow_mut().push_undo(op);
+        } else {
+            // Nothing was re-applied; return the op to the redo stack so the user
+            // can retry — it was already popped in trigger_redo.
+            manager.undo_history.borrow_mut().push_redo(op);
         }
         manager.refresh_undo_actions();
         // Show the toast before refreshing (see perform_undo for why).

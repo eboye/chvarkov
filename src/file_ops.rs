@@ -124,6 +124,22 @@ pub fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Remove a path: recursively if it is a *real* directory, otherwise (regular
+/// file or symlink) just unlink it. The dispatch uses `symlink_metadata` rather
+/// than `is_dir()` so a symlink that points at a directory is removed as a link
+/// — `is_dir()` follows the link, which would make `remove_dir_all` error (and
+/// leave the dangling link behind) or, worse, recurse into the link target.
+pub fn remove_path(path: &Path) -> std::io::Result<()> {
+    let is_real_dir = std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_dir())
+        .unwrap_or(false);
+    if is_real_dir {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+}
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Destination free space exceeded by `total`?
@@ -209,6 +225,9 @@ pub fn validate_filename(name: &str) -> Result<(), String> {
     if name.contains('/') {
         return Err("Name cannot contain \u{201c}/\u{201d}".into());
     }
+    if name.contains('\0') {
+        return Err("Name cannot contain null bytes".into());
+    }
     if name == "." || name == ".." {
         return Err("Name cannot be \u{201c}.\u{201d} or \u{201c}..\u{201d}".into());
     }
@@ -226,6 +245,68 @@ fn is_cross_device(e: &std::io::Error) -> bool {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TransferKind { Copy, Move }
 
+/// Filesystem facts about one transfer source and its prospective target, all
+/// gathered in a single blocking call so the UI thread never performs the stats
+/// (which can block for seconds on a slow mount: NFS/SMB/sshfs).
+struct SrcFacts {
+    src_canon: Option<PathBuf>,
+    src_is_dir: bool,
+    target: PathBuf,
+    target_canon: Option<PathBuf>,
+    target_exists: bool,
+    target_is_symlink: bool,
+    target_is_dir: bool,
+    /// A non-colliding name for the source in `dest_dir` (only meaningful when
+    /// `target_exists`); precomputed here to keep its `exists()` probes off the
+    /// UI thread.
+    suggested: String,
+}
+
+/// Stat `src` and its prospective target `dest_dir/name`. Blocking; call via
+/// `gio::spawn_blocking`.
+fn gather_src_facts(src: &Path, dest_dir: &Path, name: &str) -> SrcFacts {
+    let src_canon = src.canonicalize().ok();
+    let src_is_dir = src.is_dir();
+    let target = dest_dir.join(name);
+    let target_canon = target.canonicalize().ok();
+    let target_exists = target.exists();
+    let (target_is_symlink, target_is_dir) = if target_exists {
+        (
+            target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false),
+            target.is_dir(),
+        )
+    } else {
+        (false, false)
+    };
+    let suggested = if target_exists {
+        conflict_name(name, |n| dest_dir.join(n).exists())
+    } else {
+        String::new()
+    };
+    SrcFacts {
+        src_canon, src_is_dir, target, target_canon,
+        target_exists, target_is_symlink, target_is_dir, suggested,
+    }
+}
+
+/// `dir/name` if it does not exist (probe off the UI thread), else `None`.
+async fn join_if_free(dir: &Path, name: &str) -> Option<PathBuf> {
+    let p = dir.join(name);
+    match gio::spawn_blocking(move || if p.exists() { None } else { Some(p) }).await {
+        Ok(opt) => opt,
+        Err(_) => None,
+    }
+}
+
+/// `unique_destination` computed off the UI thread.
+async fn unique_dest_async(dir: &Path, name: &str) -> PathBuf {
+    let d = dir.to_path_buf();
+    let n = name.to_string();
+    gio::spawn_blocking(move || unique_destination(&d, &n))
+        .await
+        .unwrap_or_else(|_| dir.join(name))
+}
+
 /// Move or copy a batch of source paths into `dest_dir`, prompting on collisions.
 /// Reports via the manager's toast overlay and refreshes the UI when done.
 pub fn transfer(
@@ -240,43 +321,61 @@ pub fn transfer(
         let mut skipped = 0usize;
         let mut failed = 0usize;
 
-        let dest_canon = dest_dir.canonicalize().ok();
+        // dest dir canonicalized once, off the UI thread.
+        let dc = dest_dir.clone();
+        let dest_canon = gio::spawn_blocking(move || dc.canonicalize().ok())
+            .await
+            .ok()
+            .flatten();
 
         // (src, target, merge_dirs, replaced). `replaced` marks a target that
         // pre-existed and was overwritten — such transfers are NOT recorded for
         // undo (the overwritten file is gone and can't be restored).
         let mut work: Vec<(PathBuf, PathBuf, bool, bool)> = Vec::new();
         for src in sources {
-            let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
-            let src_canon = src.canonicalize().ok();
-            if src.is_dir() && src_canon.is_none() {
+            let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { failed += 1; continue };
+
+            // Gather every stat/canonicalize/exists for this source off the UI thread.
+            let s = src.clone();
+            let dd = dest_dir.clone();
+            let nm = name.clone();
+            let Ok(facts) = gio::spawn_blocking(move || gather_src_facts(&s, &dd, &nm)).await else {
+                failed += 1; continue;
+            };
+
+            if facts.src_is_dir && facts.src_canon.is_none() {
                 manager.send_toast(&format!("Can't verify \u{201c}{name}\u{201d}; skipped for safety"));
                 failed += 1; continue;
             }
-            if src.is_dir()
-                && let (Some(sc), Some(dc)) = (&src_canon, &dest_canon)
+            if facts.src_is_dir
+                && let (Some(sc), Some(dc)) = (&facts.src_canon, &dest_canon)
                     && is_within(dc, sc) {
                         manager.send_toast(&format!("Can't place \u{201c}{name}\u{201d} inside itself"));
                         failed += 1; continue;
                     }
-            let mut target = dest_dir.join(&name);
-            let same_path = matches!((&src_canon, target.canonicalize().ok()), (Some(a), Some(b)) if *a == b);
+
+            let mut target = facts.target.clone();
+            let mut target_exists = facts.target_exists;
+            let same_path = matches!((&facts.src_canon, &facts.target_canon), (Some(a), Some(b)) if a == b);
             if same_path {
                 match kind {
-                    TransferKind::Copy => { target = unique_destination(&dest_dir, &name); }
+                    TransferKind::Copy => {
+                        // Freshly-generated unique name — guaranteed free.
+                        target = unique_dest_async(&dest_dir, &name).await;
+                        target_exists = false;
+                    }
                     TransferKind::Move => { skipped += 1; continue; }
                 }
             }
+
             let mut merge_dirs = false;
             let mut replaced = false;
-            if target.exists() {
-                let target_is_symlink = target.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
-                let both_dirs = src.is_dir() && target.is_dir() && !target_is_symlink;
-                let suggested = conflict_name(&name, |n| dest_dir.join(n).exists());
+            if target_exists {
+                let both_dirs = facts.src_is_dir && facts.target_is_dir && !facts.target_is_symlink;
                 let (choice, keep_name) = match apply_to_all {
                     Some(c) => (c, String::new()),
                     None => {
-                        let (c, all, kn) = ask_conflict(&parent, &name, both_dirs, &suggested).await;
+                        let (c, all, kn) = ask_conflict(&parent, &name, both_dirs, &facts.suggested).await;
                         if all { apply_to_all = Some(c); }
                         (c, kn)
                     }
@@ -286,20 +385,24 @@ pub fn transfer(
                     "keep" => {
                         // Use the (possibly edited) name when it's valid and free;
                         // otherwise auto-generate. Apply-to-all always auto-names.
-                        let edited_ok = apply_to_all.is_none()
+                        let edited = if apply_to_all.is_none()
                             && !keep_name.trim().is_empty()
                             && validate_filename(&keep_name).is_ok()
-                            && !dest_dir.join(&keep_name).exists();
-                        target = if edited_ok { dest_dir.join(&keep_name) } else { unique_destination(&dest_dir, &name) };
+                        {
+                            join_if_free(&dest_dir, &keep_name).await
+                        } else {
+                            None
+                        };
+                        target = match edited {
+                            Some(p) => p,
+                            None => unique_dest_async(&dest_dir, &name).await,
+                        };
                     }
                     _ => {
                         if both_dirs { merge_dirs = true; }
                         else {
                             let t = target.clone();
-                            let removed = gio::spawn_blocking(move || {
-                                let is_real_dir = std::fs::symlink_metadata(&t).map(|m| m.file_type().is_dir()).unwrap_or(false);
-                                if is_real_dir { std::fs::remove_dir_all(&t) } else { std::fs::remove_file(&t) }
-                            }).await;
+                            let removed = gio::spawn_blocking(move || remove_path(&t)).await;
                             if !matches!(removed, Ok(Ok(()))) { manager.send_toast(&format!("Could not replace {name}")); failed += 1; continue; }
                             replaced = true;
                         }
@@ -416,12 +519,19 @@ fn same_device(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Free bytes on the filesystem holding `dir`, if queryable.
+/// Free bytes on the filesystem holding `dir`, if queryable. Returns `None` when
+/// the filesystem does not report `filesystem::free` — without this guard
+/// `attribute_uint64` would default to `0` and the caller's free-space gate would
+/// spuriously reject every non-empty copy on such filesystems.
 fn free_space(dir: &Path) -> Option<u64> {
     let info = gio::File::for_path(dir)
         .query_filesystem_info("filesystem::free", gio::Cancellable::NONE)
         .ok()?;
-    Some(info.attribute_uint64("filesystem::free"))
+    if info.has_attribute("filesystem::free") {
+        Some(info.attribute_uint64("filesystem::free"))
+    } else {
+        None
+    }
 }
 
 enum ItemOutcome { Ok, Cancelled, Failed }
@@ -500,9 +610,7 @@ async fn transfer_item(
 
     if kind == TransferKind::Move && item_ok {
         let s = src.clone();
-        let _ = gio::spawn_blocking(move || {
-            if s.is_dir() { std::fs::remove_dir_all(&s) } else { std::fs::remove_file(&s) }
-        }).await;
+        let _ = gio::spawn_blocking(move || remove_path(&s)).await;
     }
 
     if item_ok { ItemOutcome::Ok } else { ItemOutcome::Failed }
@@ -633,9 +741,7 @@ pub fn delete(manager: Rc<ColumnManager>, parent: gtk::Window, paths: Vec<PathBu
         let mut failed = 0usize;
         for path in &paths {
             let p = path.clone();
-            let res = gio::spawn_blocking(move || {
-                if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) }
-            }).await;
+            let res = gio::spawn_blocking(move || remove_path(&p)).await;
             match res {
                 Ok(Ok(())) => done += 1,
                 _ => failed += 1,
@@ -693,11 +799,13 @@ pub fn archive_name(paths: &[PathBuf]) -> String {
 pub fn compress(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
     let Some(first) = paths.first() else { return };
     let Some(dir) = first.parent().map(|p| p.to_path_buf()) else { return };
-    let name = conflict_name(&archive_name(&paths), |n| dir.join(n).exists());
-    let out = dir.join(name);
 
     glib::spawn_future_local(async move {
-        let res = gio::spawn_blocking(move || zip_paths(&paths, &out)).await;
+        // Name resolution probes the destination dir; do it (and the zip) off thread.
+        let res = gio::spawn_blocking(move || {
+            let name = conflict_name(&archive_name(&paths), |n| dir.join(n).exists());
+            zip_paths(&paths, &dir.join(name))
+        }).await;
         match res {
             Ok(Ok(())) => { manager.send_toast("Compressed"); manager.refresh(); }
             Ok(Err(e)) => manager.send_toast(&format!("Compression failed: {e}")),
@@ -707,7 +815,6 @@ pub fn compress(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
 }
 
 fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
-    use std::io::Write;
     let file = std::fs::File::create(out)?;
     let mut zip = zip::ZipWriter::new(file);
     let opts = zip::write::SimpleFileOptions::default()
@@ -728,8 +835,10 @@ fn zip_paths(paths: &[PathBuf], out: &Path) -> std::io::Result<()> {
             }
         } else {
             zip.start_file(name, *opts).map_err(std::io::Error::from)?;
-            let data = std::fs::read(path)?;
-            zip.write_all(&data)?;
+            // Stream the file through the zip writer so a large file is not read
+            // entirely into memory (which could OOM on multi-GB inputs).
+            let mut f = std::fs::File::open(path)?;
+            std::io::copy(&mut f, zip)?;
         }
         Ok(())
     }
@@ -866,22 +975,29 @@ fn show_share_sheet(parent: &gtk::Window, paths: &[PathBuf]) -> bool {
 }
 
 /// Create a symlink named "<name> link" beside each source (numbered on collision).
+/// The collision probe and link creation run off the UI thread.
 pub fn symlink(manager: Rc<ColumnManager>, paths: Vec<PathBuf>) {
-    let mut made = 0usize;
-    for src in &paths {
-        let Some(dir) = src.parent() else { continue };
-        let Some(name) = src.file_name().and_then(|n| n.to_str()) else { continue };
-        let link_name = conflict_name(&format!("{name} link"), |n| dir.join(n).exists());
-        let link_path = dir.join(link_name);
-        match std::os::unix::fs::symlink(src, &link_path) {
-            Ok(()) => made += 1,
-            Err(e) => manager.send_toast(&format!("Link failed: {e}")),
+    glib::spawn_future_local(async move {
+        let mut made = 0usize;
+        for src in &paths {
+            let Some(dir) = src.parent().map(|p| p.to_path_buf()) else { continue };
+            let Some(name) = src.file_name().and_then(|n| n.to_str()).map(str::to_string) else { continue };
+            let s = src.clone();
+            let res = gio::spawn_blocking(move || {
+                let link_name = conflict_name(&format!("{name} link"), |n| dir.join(n).exists());
+                std::os::unix::fs::symlink(&s, dir.join(link_name))
+            }).await;
+            match res {
+                Ok(Ok(())) => made += 1,
+                Ok(Err(e)) => manager.send_toast(&format!("Link failed: {e}")),
+                Err(_) => manager.send_toast("Link failed"),
+            }
         }
-    }
-    if made > 0 {
-        manager.send_toast(&format!("Created {made} link(s)"));
-        manager.refresh();
-    }
+        if made > 0 {
+            manager.send_toast(&format!("Created {made} link(s)"));
+            manager.refresh();
+        }
+    });
 }
 
 /// Duplicate each path in place with a `(Copy)` name (symlink-preserving). Never
@@ -1086,6 +1202,7 @@ mod tests {
         assert!(validate_filename("").is_err());
         assert!(validate_filename("   ").is_err());
         assert!(validate_filename("a/b").is_err());
+        assert!(validate_filename("a\0b").is_err());
         assert!(validate_filename(".").is_err());
         assert!(validate_filename("..").is_err());
         assert!(validate_filename(&"x".repeat(256)).is_err());
@@ -1096,6 +1213,24 @@ mod tests {
     fn archive_name_single_and_multi() {
         assert_eq!(archive_name(&[PathBuf::from("/a/b/photo.png")]), "photo.png.zip");
         assert_eq!(archive_name(&[PathBuf::from("/a/x"), PathBuf::from("/a/y")]), "Archive.zip");
+    }
+
+    #[test]
+    fn remove_path_unlinks_symlink_to_dir_without_touching_target() {
+        let tmp = std::env::temp_dir().join(format!("chv_rm_{}", std::process::id()));
+        let real = tmp.join("real_dir");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("keep.txt"), b"keep").unwrap();
+        let link = tmp.join("link_to_dir");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        // Removing the symlink must succeed and must NOT delete the target tree.
+        remove_path(&link).unwrap();
+        assert!(link.symlink_metadata().is_err(), "symlink removed");
+        assert!(real.join("keep.txt").exists(), "symlink target preserved");
+        // And a real directory is still removed recursively.
+        remove_path(&real).unwrap();
+        assert!(!real.exists());
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]

@@ -789,13 +789,15 @@ fn setup_actions(app: &Application) {
                 && let Some(lv) = manager.get_focused_list_view()
                     && let Some(sm) = get_selection_model(&lv) {
                         let n_items = sm.n_items();
-                        for i in 0..n_items {
-                            if sm.is_selected(i) {
-                                sm.unselect_item(i);
-                            } else {
-                                sm.select_item(i, false);
-                            }
-                        }
+                        if n_items == 0 { return; }
+                        // Invert in a single model update so the selection-changed
+                        // handler runs once, not once per item. The previous
+                        // per-item toggle loop fired O(n) signals (each scheduling
+                        // an idle callback), which froze the UI on large folders.
+                        let complement = gtk::Bitset::new_range(0, n_items);
+                        complement.subtract(&sm.selection());
+                        let mask = gtk::Bitset::new_range(0, n_items);
+                        sm.set_selection(&complement, &mask);
                     }
         });
     });
